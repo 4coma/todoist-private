@@ -1,286 +1,185 @@
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/timezone.dart' as tz;
-import 'package:timezone/data/latest.dart' as tz;
+import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
 
 class NotificationService {
-  static final NotificationService _instance = NotificationService._internal();
-  factory NotificationService() => _instance;
-  NotificationService._internal();
+  // Identifiants de canal (doivent être uniques)
+  static const String _channelId = 'todo_reminders';
+  static const String _channelName = 'Todo Rappels';
+  static const String _channelDescription = 'Rappels pour les tâches à faire';
 
-  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  /// Initialise le service de notifications
+  /// DOIT être appelé dans main() avant runApp()
+  static Future<void> initialize() async {
+    await AwesomeNotifications().initialize(
+      null, // null pour utiliser les icônes par défaut
+      [
+        NotificationChannel(
+          channelKey: _channelId,
+          channelName: _channelName,
+          channelDescription: _channelDescription,
+          defaultColor: Colors.blue,
+          ledColor: Colors.white,
+          importance: NotificationImportance.High,
+          channelShowBadge: true,
+          enableVibration: true,
+          enableLights: true,
+        ),
+      ],
+    );
+  }
+
+  /// Demande les permissions de notification
+  /// IMPORTANT: Appeler cette méthode avant de programmer des notifications
+  static Future<bool> requestPermission() async {
+    return await AwesomeNotifications().requestPermissionToSendNotifications();
+  }
+
+  /// Programme une notification à une date/heure spécifique
+  static Future<void> scheduleReminder({
+    required int id,           // ID unique de la notification
+    required String title,     // Titre de la notification
+    required String body,      // Contenu de la notification
+    required DateTime scheduledDate, // Date/heure de déclenchement
+  }) async {
+    debugPrint('🔍 === PROGRAMMATION RAPPEL AVEC AWESOME_NOTIFICATIONS ===');
+    debugPrint('🔍 ID: $id, Titre: $title, Date: $scheduledDate');
+    
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: id,
+        channelKey: _channelId,
+        title: title,
+        body: body,
+        notificationLayout: NotificationLayout.Default,
+        category: NotificationCategory.Reminder,
+      ),
+      schedule: NotificationCalendar.fromDate(
+        date: scheduledDate,
+        allowWhileIdle: true, // IMPORTANT: Permet l'exécution même en mode économie d'énergie
+      ),
+    );
+    
+    debugPrint('✅ Rappel programmé avec succès pour ID: $id');
+    debugPrint('🔍 === FIN PROGRAMMATION RAPPEL ===');
+  }
+
+  /// Annule une notification spécifique
+  static Future<void> cancelReminder(int id) async {
+    await AwesomeNotifications().cancel(id);
+    debugPrint('Notification annulée pour ID: $id');
+  }
+
+  /// Annule toutes les notifications
+  static Future<void> cancelAllReminders() async {
+    await AwesomeNotifications().cancelAll();
+    debugPrint('Toutes les notifications ont été annulées');
+  }
+
+  /// Configure l'écoute des actions sur les notifications
+  static void listenToActionStream(Function(ReceivedAction) onActionReceived) {
+    AwesomeNotifications().setListeners(
+      onActionReceivedMethod: (ReceivedAction receivedAction) async {
+        onActionReceived(receivedAction);
+      },
+    );
+  }
+
+  /// Nettoie les ressources (optionnel avec awesome_notifications)
+  static void dispose() {
+    // Pas besoin de fermer explicitement avec awesome_notifications
+  }
 
   // Générer un ID valide pour les notifications (32-bit)
-  int _generateNotificationId(int taskId) {
+  static int _generateNotificationId(int taskId) {
     // Utiliser l'ID de la tâche pour générer un ID de notification cohérent
     // Assurer que l'ID reste dans les limites 32-bit d'Android
     return (taskId % 1000000) + 1000; // IDs entre 1000 et 1000999
   }
 
-  Future<void> initialize() async {
-    // Initialiser timezone
-    tz.initializeTimeZones();
-    
-    // Définir le timezone local
-    tz.setLocalLocation(tz.getLocation('Europe/Paris'));
-
-    // Configuration pour Android
-    const AndroidInitializationSettings androidSettings = 
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    // Configuration pour Linux
-    const LinuxInitializationSettings linuxSettings = 
-        LinuxInitializationSettings(
-          defaultActionName: 'Open notification',
-        );
-
-    // Configuration générale
-    const InitializationSettings settings = InitializationSettings(
-      android: androidSettings,
-      linux: linuxSettings,
-    );
-
-    await _notifications.initialize(
-      settings,
-      onDidReceiveNotificationResponse: _onNotificationTapped,
-    );
-    
-    // Demander les permissions sur Android
-    await _requestPermissions();
-  }
-
-  Future<void> _requestPermissions() async {
-    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
-        _notifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-
-    if (androidImplementation != null) {
-      final bool? granted = await androidImplementation.requestNotificationsPermission();
-      debugPrint('Permission accordée: $granted');
-      
-      // Note: Les permissions d'alarme exacte sont gérées automatiquement par le système
-      debugPrint('Permissions de notification demandées');
-    }
-  }
-
-  void _onNotificationTapped(NotificationResponse response) {
-    debugPrint('Notification tapée: ${response.payload}');
-    // Ici vous pouvez ajouter la logique pour ouvrir l'app ou une page spécifique
-  }
-
-  Future<void> scheduleTaskReminder({
-    required int taskId, // ID de la tâche (peut être grand)
+  // Méthode de compatibilité avec l'ancien code
+  static Future<void> scheduleTaskReminder({
+    required int taskId,
     required String title,
     required String body,
     required DateTime scheduledDate,
   }) async {
-    try {
-      // Générer un ID valide pour la notification basé sur l'ID de la tâche
-      final int notificationId = _generateNotificationId(taskId);
-      
-      // Annuler toute notification existante pour cette tâche
-      await cancelNotification(notificationId);
-
-      // Vérifier que la date est dans le futur
-      if (scheduledDate.isBefore(DateTime.now())) {
-        debugPrint('Date de notification dans le passé: $scheduledDate');
-        return;
-      }
-
-      // Créer la notification
-      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        'task_reminders',
-        'Task Reminders',
-        channelDescription: 'Notifications for task reminders',
-        importance: Importance.high,
-        priority: Priority.high,
-        enableVibration: true,
-        playSound: true,
-        icon: '@mipmap/ic_launcher',
-      );
-
-      const LinuxNotificationDetails linuxDetails = LinuxNotificationDetails(
-        actions: <LinuxNotificationAction>[
-          LinuxNotificationAction(
-            key: 'complete',
-            label: 'Complete Task',
-          ),
-          LinuxNotificationAction(
-            key: 'snooze',
-            label: 'Snooze 15 min',
-          ),
-        ],
-      );
-
-      const NotificationDetails details = NotificationDetails(
-        android: androidDetails,
-        linux: linuxDetails,
-      );
-
-      // Convertir la date en TZDateTime
-      final tz.TZDateTime scheduledTZDate = tz.TZDateTime.from(scheduledDate, tz.local);
-      
-      debugPrint('=== DEBUG TÂCHE PROGRAMMÉE ===');
-      debugPrint('Tâche ID: $taskId, Notification ID: $notificationId');
-      debugPrint('Date actuelle: ${DateTime.now().toString()}');
-      debugPrint('Date programmée: ${scheduledDate.toString()}');
-      debugPrint('TZDateTime programmée: ${scheduledTZDate.toString()}');
-      debugPrint('Fuseau horaire: ${tz.local.name}');
-      debugPrint('Délai: ${scheduledDate.difference(DateTime.now()).inMinutes} minutes');
-
-      // Programmer la notification
-      await _notifications.zonedSchedule(
-        notificationId,
-        title,
-        body,
-        scheduledTZDate,
-        details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation: 
-            UILocalNotificationDateInterpretation.absoluteTime,
-      );
-      
-      debugPrint('✅ Notification programmée avec succès pour ID: $notificationId');
-      debugPrint('=== FIN DEBUG TÂCHE ===');
-    } catch (e) {
-      debugPrint('Erreur lors de la programmation de la notification: $e');
-    }
-  }
-
-  Future<void> cancelNotification(int id) async {
-    try {
-      // Vérifier que l'ID est dans la plage valide pour Android (32-bit)
-      if (id > 2147483647 || id < -2147483648) {
-        debugPrint('ID de notification invalide (trop grand) pour annulation: $id');
-        return;
-      }
-      
-      await _notifications.cancel(id);
-      debugPrint('Notification annulée pour ID: $id');
-    } catch (e) {
-      debugPrint('Erreur lors de l\'annulation de la notification: $e');
-    }
-  }
-
-  // Annuler la notification d'une tâche spécifique
-  Future<void> cancelTaskNotification(int taskId) async {
+    // Générer un ID valide pour la notification basé sur l'ID de la tâche
     final int notificationId = _generateNotificationId(taskId);
-    await cancelNotification(notificationId);
+    
+    await scheduleReminder(
+      id: notificationId,
+      title: title,
+      body: body,
+      scheduledDate: scheduledDate,
+    );
   }
 
-  Future<void> cancelAllNotifications() async {
+  // Méthode de compatibilité avec l'ancien code
+  static Future<void> cancelTaskNotification(int taskId) async {
+    final int notificationId = _generateNotificationId(taskId);
+    await cancelReminder(notificationId);
+  }
+
+  // Méthode de test pour envoyer une notification immédiate
+  static Future<void> showTestNotification() async {
     try {
-      await _notifications.cancelAll();
-      debugPrint('Toutes les notifications ont été annulées');
+      debugPrint('🔍 === TEST NOTIFICATION IMMÉDIATE ===');
+      
+      await AwesomeNotifications().createNotification(
+        content: NotificationContent(
+          id: 999,
+          channelKey: _channelId,
+          title: 'Test Notification',
+          body: 'Ceci est une notification de test',
+          notificationLayout: NotificationLayout.Default,
+        ),
+      );
+      
+      debugPrint('✅ Notification de test envoyée');
+      debugPrint('🔍 === FIN TEST IMMÉDIAT ===');
     } catch (e) {
-      debugPrint('Erreur lors de l\'annulation de toutes les notifications: $e');
+      debugPrint('❌ Erreur lors de l\'envoi de la notification de test: $e');
     }
   }
 
-  Future<List<PendingNotificationRequest>> getPendingNotifications() async {
+  // Méthode de test pour programmer une notification dans 10 secondes
+  static Future<void> scheduleQuickTestNotification() async {
     try {
-      final notifications = await _notifications.pendingNotificationRequests();
-      debugPrint('Notifications en attente: ${notifications.length}');
-      for (final notification in notifications) {
-        debugPrint('Notification en attente: ID=${notification.id}, Titre=${notification.title}');
-      }
-      return notifications;
+      final DateTime scheduledDate = DateTime.now().add(const Duration(seconds: 10));
+      
+      debugPrint('🔍 === TEST RAPIDE NOTIFICATION PROGRAMMÉE ===');
+      debugPrint('🔍 Date actuelle: ${DateTime.now().toString()}');
+      debugPrint('🔍 Date programmée: ${scheduledDate.toString()}');
+      debugPrint('🔍 Délai: 10 secondes');
+      
+      await scheduleReminder(
+        id: 888,
+        title: 'Test Rapide - 10 secondes',
+        body: 'Cette notification devrait apparaître dans 10 secondes',
+        scheduledDate: scheduledDate,
+      );
+      
+      debugPrint('✅ Test rapide programmé avec succès');
+      debugPrint('🔍 === FIN TEST RAPIDE ===');
     } catch (e) {
-      debugPrint('Erreur lors de la récupération des notifications: $e');
-      return [];
+      debugPrint('❌ Erreur lors du test rapide: $e');
     }
   }
 
   // Vérifier l'état des permissions
-  Future<void> checkPermissions() async {
-    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
-        _notifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-
-    if (androidImplementation != null) {
-      final bool? notificationsEnabled = await androidImplementation.areNotificationsEnabled();
-      
-      debugPrint('Notifications activées: $notificationsEnabled');
-      debugPrint('Permissions d\'alarme exacte demandées lors de l\'initialisation');
+  static Future<void> checkPermissions() async {
+    debugPrint('🔍 === ÉTAT DES PERMISSIONS ===');
+    
+    final isAllowed = await AwesomeNotifications().isNotificationAllowed();
+    debugPrint('🔍 Notifications autorisées: $isAllowed');
+    
+    if (!isAllowed) {
+      debugPrint('❌ Les notifications ne sont pas autorisées');
+      debugPrint('L\'utilisateur doit les activer dans les paramètres système');
+    } else {
+      debugPrint('✅ Toutes les permissions sont accordées');
     }
-  }
-
-  // Méthode de test pour programmer une notification dans 1 minute
-  Future<void> scheduleTestNotification() async {
-    try {
-      final int notificationId = 999;
-      final DateTime now = DateTime.now();
-      final DateTime scheduledDate = now.add(const Duration(minutes: 1));
-      
-      debugPrint('=== DEBUG NOTIFICATION PROGRAMMÉE ===');
-      debugPrint('Date actuelle: ${now.toString()}');
-      debugPrint('Date programmée: ${scheduledDate.toString()}');
-      debugPrint('Fuseau horaire local: ${tz.local.name}');
-      debugPrint('Délai: ${scheduledDate.difference(now).inSeconds} secondes');
-      
-      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        'test_scheduled_channel',
-        'Test Scheduled Channel',
-        channelDescription: 'Channel for test scheduled notifications',
-        importance: Importance.high,
-        priority: Priority.high,
-        enableVibration: true,
-        playSound: true,
-        icon: '@mipmap/ic_launcher',
-      );
-
-      const NotificationDetails details = NotificationDetails(
-        android: androidDetails,
-      );
-
-      final tz.TZDateTime scheduledTZDate = tz.TZDateTime.from(scheduledDate, tz.local);
-      debugPrint('TZDateTime programmée: ${scheduledTZDate.toString()}');
-      
-      await _notifications.zonedSchedule(
-        notificationId,
-        'Test Notification Programmé',
-        'Cette notification a été programmée pour dans 1 minute',
-        scheduledTZDate,
-        details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation: 
-            UILocalNotificationDateInterpretation.absoluteTime,
-      );
-      
-      debugPrint('✅ Notification de test programmée avec succès pour: ${scheduledTZDate.toString()}');
-      debugPrint('=== FIN DEBUG ===');
-    } catch (e) {
-      debugPrint('❌ Erreur lors de la programmation de la notification de test: $e');
-    }
-  }
-
-  // Méthode de test pour envoyer une notification immédiate
-  Future<void> showTestNotification() async {
-    try {
-      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        'test_channel',
-        'Test Channel',
-        channelDescription: 'Channel for test notifications',
-        importance: Importance.high,
-        priority: Priority.high,
-        enableVibration: true,
-        playSound: true,
-      );
-
-      const NotificationDetails details = NotificationDetails(
-        android: androidDetails,
-      );
-
-      await _notifications.show(
-        999, // ID unique pour le test
-        'Test Notification',
-        'Ceci est une notification de test',
-        details,
-      );
-      
-      debugPrint('Notification de test envoyée');
-    } catch (e) {
-      debugPrint('Erreur lors de l\'envoi de la notification de test: $e');
-    }
+    
+    debugPrint('🔍 === FIN ÉTAT DES PERMISSIONS ===');
   }
 } 

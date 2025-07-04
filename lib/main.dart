@@ -7,8 +7,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // Initialiser le service de notifications
-  final notificationService = NotificationService();
-  await notificationService.initialize();
+  await NotificationService.initialize();
+  
+  // Vérifier l'état des permissions
+  await NotificationService.checkPermissions();
   
   runApp(const TodoApp());
 }
@@ -88,7 +90,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
           _selectedProject = _projects.first;
         });
       } else {
-        _selectedProject = _projects.first;
+    _selectedProject = _projects.first;
       }
 
       // Charger les tâches
@@ -109,11 +111,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Reprogrammer les notifications pour toutes les tâches avec rappel
   Future<void> _rescheduleNotifications() async {
     try {
-      final notificationService = NotificationService();
-      
       for (final todo in _todos) {
         if (todo.reminder != null && todo.reminder!.isAfter(DateTime.now())) {
-          await notificationService.scheduleTaskReminder(
+          await NotificationService.scheduleTaskReminder(
             taskId: todo.id,
             title: todo.title,
             body: todo.description.isNotEmpty ? todo.description : 'Rappel de tâche',
@@ -122,9 +122,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
         }
       }
       
-      debugPrint('✅ Notifications reprogrammées pour ${_todos.where((t) => t.reminder != null && t.reminder!.isAfter(DateTime.now())).length} tâches');
+      debugPrint('✅ Rappels reprogrammés pour ${_todos.where((t) => t.reminder != null && t.reminder!.isAfter(DateTime.now())).length} tâches');
     } catch (e) {
-      debugPrint('❌ Erreur lors de la reprogrammation des notifications: $e');
+      debugPrint('❌ Erreur lors de la reprogrammation des rappels: $e');
     }
   }
 
@@ -173,7 +173,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
         await _saveData();
         // Planifier la notification pour la tâche principale
         if (newTodo.reminder != null) {
-          await NotificationService().scheduleTaskReminder(
+          await NotificationService.scheduleTaskReminder(
             taskId: newTodo.id,
             title: newTodo.title,
             body: newTodo.description.isNotEmpty ? newTodo.description : 'Rappel de tâche',
@@ -183,7 +183,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
         // Planifier les notifications pour les sous-tâches
         for (final subTask in subTasks) {
           if (subTask.reminder != null) {
-            await NotificationService().scheduleTaskReminder(
+            await NotificationService.scheduleTaskReminder(
               taskId: subTask.id,
               title: subTask.title,
               body: subTask.description.isNotEmpty ? subTask.description : 'Rappel de sous-tâche',
@@ -235,7 +235,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
         // Pas besoin d'annuler explicitement car scheduleTaskReminder le fait automatiquement
         // Planifier la nouvelle notification si besoin
         if (updatedTodo.reminder != null) {
-          await NotificationService().scheduleTaskReminder(
+          await NotificationService.scheduleTaskReminder(
             taskId: updatedTodo.id,
             title: updatedTodo.title,
             body: updatedTodo.description.isNotEmpty ? updatedTodo.description : 'Rappel de tâche',
@@ -352,12 +352,12 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   void _deleteTodo(int id) async {
     // Annuler les notifications de la tâche et de ses sous-tâches
-    await NotificationService().cancelTaskNotification(id);
+    await NotificationService.cancelTaskNotification(id);
     
     // Récupérer toutes les sous-tâches pour annuler leurs notifications
     final subTasks = _getAllSubTasks(id);
     for (final subTask in subTasks) {
-      await NotificationService().cancelTaskNotification(subTask.id);
+      await NotificationService.cancelTaskNotification(subTask.id);
     }
     
     setState(() {
@@ -640,43 +640,25 @@ class _TodoHomePageState extends State<TodoHomePage> {
             tooltip: 'Changer le thème',
           ),
           IconButton(
-            icon: const Icon(Icons.notifications),
+            icon: const Icon(Icons.flash_on),
             onPressed: () async {
-              // Vérifier d'abord les permissions
-              await NotificationService().checkPermissions();
-              
-              // Envoyer la notification de test
-              await NotificationService().showTestNotification();
-              
+              await NotificationService.showTestNotification();
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Notification de test envoyée ! Vérifiez les logs pour les permissions.'),
+                  content: Text('Test notification immédiate envoyée !'),
                   duration: Duration(seconds: 3),
                 ),
               );
             },
-            tooltip: 'Tester les notifications',
-          ),
-          IconButton(
-            icon: const Icon(Icons.schedule),
-            onPressed: () async {
-              final pendingNotifications = await NotificationService().getPendingNotifications();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('${pendingNotifications.length} notification(s) en attente'),
-                  duration: const Duration(seconds: 3),
-                ),
-              );
-            },
-            tooltip: 'Voir les notifications en attente',
+            tooltip: 'Test notification immédiate',
           ),
           IconButton(
             icon: const Icon(Icons.timer),
             onPressed: () async {
-              await NotificationService().scheduleTestNotification();
+              await NotificationService.scheduleQuickTestNotification();
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Notification de test programmée pour dans 1 minute ! Vérifiez les logs.'),
+                  content: Text('Test rapide programmé pour dans 10 secondes !'),
                   duration: Duration(seconds: 3),
                 ),
               );
@@ -1302,7 +1284,7 @@ class _AddTodoModalState extends State<AddTodoModal> {
                           );
                           return;
                         }
-                                                        final newTodo = TodoItem(
+                            final newTodo = TodoItem(
                               id: DateTime.now().millisecondsSinceEpoch,
                               title: _titleController.text.trim(),
                               description: _descriptionController.text.trim(),
@@ -1732,18 +1714,18 @@ class _EditTodoModalState extends State<EditTodoModal> {
                           );
                           return;
                         }
-                                                    final updatedTodo = TodoItem(
-                          id: widget.todo.id,
-                          title: _titleController.text.trim(),
-                          description: _descriptionController.text.trim(),
-                          dueDate: _selectedDate,
-                          priority: _selectedPriority,
-                          projectId: _selectedProject!.id,
-                          isCompleted: widget.todo.isCompleted,
+                            final updatedTodo = TodoItem(
+                              id: widget.todo.id,
+                              title: _titleController.text.trim(),
+                              description: _descriptionController.text.trim(),
+                              dueDate: _selectedDate,
+                              priority: _selectedPriority,
+                              projectId: _selectedProject!.id,
+                              isCompleted: widget.todo.isCompleted,
                           parentId: widget.todo.parentId, // Conserve le parent existant
                           level: widget.todo.level, // Conserve le niveau existant
                           reminder: _selectedReminder,
-                        );
+                            );
                             Navigator.pop(context, {'todo': updatedTodo});
                           },
                     child: const Text('Sauvegarder'),

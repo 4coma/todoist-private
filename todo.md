@@ -1,6 +1,6 @@
 ~~ due date ~~
 ~~projects~~
-- reminders
+~~reminders~~
 ~~subtasks~~
 ~~task descriptions~~
 - auth, firebase storage
