@@ -31,6 +31,13 @@ class _TodoAppState extends State<TodoApp> {
   }
 }
 
+enum SortType {
+  dueDate,
+  name,
+  dateAdded,
+  priority,
+}
+
 class TodoHomePage extends StatefulWidget {
   final Function(ThemeData) onThemeChanged;
   
@@ -51,6 +58,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   ];
   final List<TodoItem> _todos = [];
   Project? _selectedProject;
+  SortType _currentSort = SortType.dateAdded;
 
   @override
   void initState() {
@@ -67,6 +75,26 @@ class _TodoHomePageState extends State<TodoHomePage> {
       if (result != null && result['todo'] != null) {
         setState(() {
           _todos.add(result['todo'] as TodoItem);
+        });
+      }
+    });
+  }
+
+  void _editTodo(TodoItem todo) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => EditTodoModal(
+        todo: todo,
+        projects: _projects,
+      ),
+    ).then((result) {
+      if (result != null && result['todo'] != null) {
+        setState(() {
+          final index = _todos.indexWhere((t) => t.id == todo.id);
+          if (index != -1) {
+            _todos[index] = result['todo'] as TodoItem;
+          }
         });
       }
     });
@@ -115,6 +143,48 @@ class _TodoHomePageState extends State<TodoHomePage> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showSortDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Trier les tâches'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildSortOption(SortType.dueDate, 'Date d\'échéance', Icons.schedule),
+            _buildSortOption(SortType.name, 'Nom', Icons.sort_by_alpha),
+            _buildSortOption(SortType.dateAdded, 'Date d\'ajout', Icons.add_circle),
+            _buildSortOption(SortType.priority, 'Priorité', Icons.priority_high),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSortOption(SortType sortType, String title, IconData icon) {
+    final isSelected = _currentSort == sortType;
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+      ),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          color: isSelected ? Theme.of(context).primaryColor : null,
+        ),
+      ),
+      trailing: isSelected ? const Icon(Icons.check, color: Colors.green) : null,
+      onTap: () {
+        setState(() {
+          _currentSort = sortType;
+        });
+        Navigator.pop(context);
+      },
     );
   }
 
@@ -205,9 +275,56 @@ class _TodoHomePageState extends State<TodoHomePage> {
     }
   }
 
+  int _getPriorityValue(Priority priority) {
+    switch (priority) {
+      case Priority.low:
+        return 1;
+      case Priority.medium:
+        return 2;
+      case Priority.high:
+        return 3;
+    }
+  }
+
   List<TodoItem> get _filteredTodos {
     if (_selectedProject == null) return _todos;
-    return _todos.where((todo) => todo.projectId == _selectedProject!.id).toList();
+    var filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id).toList();
+    
+    // Appliquer le tri
+    switch (_currentSort) {
+      case SortType.dueDate:
+        filtered.sort((a, b) {
+          if (a.dueDate == null && b.dueDate == null) return 0;
+          if (a.dueDate == null) return 1;
+          if (b.dueDate == null) return -1;
+          return a.dueDate!.compareTo(b.dueDate!);
+        });
+        break;
+      case SortType.name:
+        filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        break;
+      case SortType.dateAdded:
+        filtered.sort((a, b) => b.id.compareTo(a.id)); // Plus récent en premier
+        break;
+      case SortType.priority:
+        filtered.sort((a, b) => _getPriorityValue(b.priority).compareTo(_getPriorityValue(a.priority)));
+        break;
+    }
+    
+    return filtered;
+  }
+
+  String _getSortDisplayName() {
+    switch (_currentSort) {
+      case SortType.dueDate:
+        return 'Échéance';
+      case SortType.name:
+        return 'Nom';
+      case SortType.dateAdded:
+        return 'Ajout';
+      case SortType.priority:
+        return 'Priorité';
+    }
   }
 
   @override
@@ -218,6 +335,40 @@ class _TodoHomePageState extends State<TodoHomePage> {
         title: const Text('Ma Liste de Tâches'),
         centerTitle: true,
         actions: [
+          // Indicateur de tri actuel
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            margin: const EdgeInsets.only(right: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.sort,
+                  size: 16,
+                  color: Theme.of(context).primaryColor,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _getSortDisplayName(),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).primaryColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Bouton de tri
+          IconButton(
+            icon: const Icon(Icons.sort),
+            onPressed: _showSortDialog,
+            tooltip: 'Trier les tâches',
+          ),
           IconButton(
             icon: const Icon(Icons.palette),
             onPressed: _showThemeSelector,
@@ -359,88 +510,97 @@ class _TodoHomePageState extends State<TodoHomePage> {
                           horizontal: 16,
                           vertical: 4,
                         ),
-                        child: ListTile(
-                          leading: Checkbox(
-                            value: todo.isCompleted,
-                            onChanged: (_) => _toggleTodo(todo.id),
-                          ),
-                          title: Text(
-                            todo.title,
-                            style: TextStyle(
-                              decoration: todo.isCompleted
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                              color: todo.isCompleted
-                                  ? Colors.grey
-                                  : null,
+                        child: InkWell(
+                          onTap: () => _editTodo(todo),
+                          child: ListTile(
+                            leading: Checkbox(
+                              value: todo.isCompleted,
+                              onChanged: (_) => _toggleTodo(todo.id),
                             ),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (todo.description.isNotEmpty)
-                                Text(
-                                  todo.description,
-                                  style: TextStyle(
-                                    color: todo.isCompleted ? Colors.grey : null,
+                            title: Text(
+                              todo.title,
+                              style: TextStyle(
+                                decoration: todo.isCompleted
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                                color: todo.isCompleted
+                                    ? Colors.grey
+                                    : null,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (todo.description.isNotEmpty)
+                                  Text(
+                                    todo.description,
+                                    style: TextStyle(
+                                      color: todo.isCompleted ? Colors.grey : null,
+                                    ),
                                   ),
-                                ),
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  if (todo.dueDate != null)
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    if (todo.dueDate != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: isOverdue 
+                                              ? Colors.red.withOpacity(0.1)
+                                              : Colors.blue.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: isOverdue ? Colors.red : Colors.blue,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    const SizedBox(width: 8),
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 8,
                                         vertical: 2,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: isOverdue 
-                                            ? Colors.red.withOpacity(0.1)
-                                            : Colors.blue.withOpacity(0.1),
+                                        color: _getPriorityColor(todo.priority).withOpacity(0.1),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Text(
-                                        '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
+                                        _getPriorityText(todo.priority),
                                         style: TextStyle(
                                           fontSize: 12,
-                                          color: isOverdue ? Colors.red : Colors.blue,
+                                          color: _getPriorityColor(todo.priority),
                                           fontWeight: FontWeight.w500,
                                         ),
                                       ),
                                     ),
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: _getPriorityColor(todo.priority).withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      _getPriorityText(todo.priority),
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: _getPriorityColor(todo.priority),
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_projects.length > 1)
-                                IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () => _deleteTodo(todo.id),
+                                  ],
                                 ),
-                            ],
+                              ],
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blue),
+                                  onPressed: () => _editTodo(todo),
+                                  tooltip: 'Modifier',
+                                ),
+                                if (_projects.length > 1)
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () => _deleteTodo(todo.id),
+                                    tooltip: 'Supprimer',
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -670,6 +830,260 @@ class _AddTodoModalState extends State<AddTodoModal> {
                             Navigator.pop(context, {'todo': newTodo});
                           },
                     child: const Text('Ajouter'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _getPriorityText(Priority priority) {
+    switch (priority) {
+      case Priority.low:
+        return 'Basse';
+      case Priority.medium:
+        return 'Moyenne';
+      case Priority.high:
+        return 'Haute';
+    }
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+}
+
+class EditTodoModal extends StatefulWidget {
+  final TodoItem todo;
+  final List<Project> projects;
+  
+  const EditTodoModal({
+    super.key, 
+    required this.todo,
+    required this.projects,
+  });
+
+  @override
+  State<EditTodoModal> createState() => _EditTodoModalState();
+}
+
+class _EditTodoModalState extends State<EditTodoModal> {
+  late final TextEditingController _titleController;
+  late final TextEditingController _descriptionController;
+  late DateTime? _selectedDate;
+  late Priority _selectedPriority;
+  late Project? _selectedProject;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.todo.title);
+    _descriptionController = TextEditingController(text: widget.todo.description);
+    _selectedDate = widget.todo.dueDate;
+    _selectedPriority = widget.todo.priority;
+    _selectedProject = widget.projects.firstWhere(
+      (project) => project.id == widget.todo.projectId,
+      orElse: () => widget.projects.first,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Modifier la Tâche',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            
+            // Projet
+            DropdownButtonFormField<Project>(
+              value: _selectedProject,
+              decoration: const InputDecoration(
+                labelText: 'Projet',
+                border: OutlineInputBorder(),
+              ),
+              items: widget.projects.map((project) {
+                return DropdownMenuItem(
+                  value: project,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: project.color,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(project.name),
+                    ],
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  _selectedProject = value;
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+            
+            // Titre
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: 'Titre de la tâche *',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // Description
+            TextField(
+              controller: _descriptionController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Description (optionnel)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // Date d'échéance
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedDate ?? DateTime.now(),
+                        firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date != null) {
+                        setState(() {
+                          _selectedDate = date;
+                        });
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade400),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today),
+                          const SizedBox(width: 8),
+                          Text(
+                            _selectedDate != null
+                                ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                                : 'Date d\'échéance (optionnel)',
+                            style: TextStyle(
+                              color: _selectedDate != null 
+                                  ? Colors.black 
+                                  : Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (_selectedDate != null)
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      setState(() {
+                        _selectedDate = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            
+            // Priorité
+            DropdownButtonFormField<Priority>(
+              value: _selectedPriority,
+              decoration: const InputDecoration(
+                labelText: 'Priorité',
+                border: OutlineInputBorder(),
+              ),
+              items: Priority.values.map((priority) {
+                return DropdownMenuItem(
+                  value: priority,
+                  child: Text(_getPriorityText(priority)),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _selectedPriority = value;
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 24),
+            
+            // Boutons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Annuler'),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _titleController.text.trim().isEmpty || _selectedProject == null
+                        ? null
+                        : () {
+                            final updatedTodo = TodoItem(
+                              id: widget.todo.id,
+                              title: _titleController.text.trim(),
+                              description: _descriptionController.text.trim(),
+                              dueDate: _selectedDate,
+                              priority: _selectedPriority,
+                              projectId: _selectedProject!.id,
+                              isCompleted: widget.todo.isCompleted,
+                            );
+                            Navigator.pop(context, {'todo': updatedTodo});
+                          },
+                    child: const Text('Sauvegarder'),
                   ),
                 ),
               ],
