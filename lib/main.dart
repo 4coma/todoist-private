@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
 import 'themes.dart';
+import 'services/notification_service.dart';
+import 'services/storage_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialiser le service de notifications
+  final notificationService = NotificationService();
+  await notificationService.initialize();
+  
   runApp(const TodoApp());
 }
 
@@ -48,7 +56,7 @@ class TodoHomePage extends StatefulWidget {
 }
 
 class _TodoHomePageState extends State<TodoHomePage> {
-  final List<Project> _projects = [
+  List<Project> _projects = [
     Project(
       id: 1,
       name: 'Personnel',
@@ -56,17 +64,78 @@ class _TodoHomePageState extends State<TodoHomePage> {
       isDefault: true,
     ),
   ];
-  final List<TodoItem> _todos = [];
+  List<TodoItem> _todos = [];
   Project? _selectedProject;
   SortType _currentSort = SortType.dateAdded;
-  
+
   // Set pour suivre les tâches dépliées (affichant leurs sous-tâches)
   final Set<int> _expandedTasks = {};
 
   @override
   void initState() {
     super.initState();
-    _selectedProject = _projects.first;
+    _loadData();
+  }
+
+  // Charger les données sauvegardées
+  Future<void> _loadData() async {
+    try {
+      // Charger les projets
+      final savedProjects = await StorageService().loadProjects();
+      if (savedProjects.isNotEmpty) {
+        setState(() {
+          _projects = savedProjects;
+          _selectedProject = _projects.first;
+        });
+      } else {
+        _selectedProject = _projects.first;
+      }
+
+      // Charger les tâches
+      final savedTodos = await StorageService().loadTodos();
+      setState(() {
+        _todos = savedTodos;
+      });
+
+      // Reprogrammer les notifications pour les tâches avec rappel
+      await _rescheduleNotifications();
+      
+      debugPrint('✅ Données chargées: ${_projects.length} projets, ${_todos.length} tâches');
+    } catch (e) {
+      debugPrint('❌ Erreur lors du chargement des données: $e');
+    }
+  }
+
+  // Reprogrammer les notifications pour toutes les tâches avec rappel
+  Future<void> _rescheduleNotifications() async {
+    try {
+      final notificationService = NotificationService();
+      
+      for (final todo in _todos) {
+        if (todo.reminder != null && todo.reminder!.isAfter(DateTime.now())) {
+          await notificationService.scheduleTaskReminder(
+            taskId: todo.id,
+            title: todo.title,
+            body: todo.description.isNotEmpty ? todo.description : 'Rappel de tâche',
+            scheduledDate: todo.reminder!,
+          );
+        }
+      }
+      
+      debugPrint('✅ Notifications reprogrammées pour ${_todos.where((t) => t.reminder != null && t.reminder!.isAfter(DateTime.now())).length} tâches');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la reprogrammation des notifications: $e');
+    }
+  }
+
+  // Méthode pour sauvegarder les données
+  Future<void> _saveData() async {
+    try {
+      await StorageService().saveProjects(_projects);
+      await StorageService().saveTodos(_todos);
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la sauvegarde: $e');
+    }
   }
 
   void _addTodo() {
@@ -74,7 +143,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
       context: context,
       isScrollControlled: true,
       builder: (context) => AddTodoModal(projects: _projects),
-    ).then((result) {
+    ).then((result) async {
       if (result != null && result['todo'] != null) {
         final newTodo = result['todo'] as TodoItem;
         final subTasks = result['subTasks'] as List<TodoItem>? ?? [];
@@ -94,10 +163,34 @@ class _TodoHomePageState extends State<TodoHomePage> {
               isCompleted: subTask.isCompleted,
               parentId: newTodo.id, // Lier à la tâche parente
               level: subTask.level,
+              reminder: subTask.reminder,
             );
             _todos.add(updatedSubTask);
           }
         });
+        
+        // Sauvegarder les données
+        await _saveData();
+        // Planifier la notification pour la tâche principale
+        if (newTodo.reminder != null) {
+          await NotificationService().scheduleTaskReminder(
+            taskId: newTodo.id,
+            title: newTodo.title,
+            body: newTodo.description.isNotEmpty ? newTodo.description : 'Rappel de tâche',
+            scheduledDate: newTodo.reminder!,
+          );
+        }
+        // Planifier les notifications pour les sous-tâches
+        for (final subTask in subTasks) {
+          if (subTask.reminder != null) {
+            await NotificationService().scheduleTaskReminder(
+              taskId: subTask.id,
+              title: subTask.title,
+              body: subTask.description.isNotEmpty ? subTask.description : 'Rappel de sous-tâche',
+              scheduledDate: subTask.reminder!,
+            );
+          }
+        }
       }
     });
   }
@@ -126,7 +219,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
           });
         },
       ),
-    ).then((result) {
+    ).then((result) async {
       if (result != null && result['todo'] != null) {
         setState(() {
           final index = _todos.indexWhere((t) => t.id == todo.id);
@@ -134,6 +227,21 @@ class _TodoHomePageState extends State<TodoHomePage> {
             _todos[index] = result['todo'] as TodoItem;
           }
         });
+        
+        // Sauvegarder les données
+        await _saveData();
+        final updatedTodo = result['todo'] as TodoItem;
+        // Note: Les notifications sont maintenant gérées avec des IDs séparés
+        // Pas besoin d'annuler explicitement car scheduleTaskReminder le fait automatiquement
+        // Planifier la nouvelle notification si besoin
+        if (updatedTodo.reminder != null) {
+          await NotificationService().scheduleTaskReminder(
+            taskId: updatedTodo.id,
+            title: updatedTodo.title,
+            body: updatedTodo.description.isNotEmpty ? updatedTodo.description : 'Rappel de tâche',
+            scheduledDate: updatedTodo.reminder!,
+          );
+        }
       }
     });
   }
@@ -142,11 +250,14 @@ class _TodoHomePageState extends State<TodoHomePage> {
     showDialog(
       context: context,
       builder: (context) => AddProjectDialog(),
-    ).then((newProject) {
+    ).then((newProject) async {
       if (newProject != null) {
         setState(() {
           _projects.add(newProject);
         });
+        
+        // Sauvegarder les données
+        await _saveData();
       }
     });
   }
@@ -166,7 +277,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
             child: const Text('Annuler'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               setState(() {
                 _projects.remove(project);
                 _todos.removeWhere((todo) => todo.projectId == project.id);
@@ -174,6 +285,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
                   _selectedProject = _projects.isNotEmpty ? _projects.first : null;
                 }
               });
+              
+              // Sauvegarder les données
+              await _saveData();
               Navigator.pop(context);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -226,18 +340,33 @@ class _TodoHomePageState extends State<TodoHomePage> {
     );
   }
 
-  void _toggleTodo(int id) {
+  void _toggleTodo(int id) async {
     setState(() {
       final todo = _todos.firstWhere((todo) => todo.id == id);
       todo.isCompleted = !todo.isCompleted;
     });
+    
+    // Sauvegarder les données
+    await _saveData();
   }
 
-  void _deleteTodo(int id) {
+  void _deleteTodo(int id) async {
+    // Annuler les notifications de la tâche et de ses sous-tâches
+    await NotificationService().cancelTaskNotification(id);
+    
+    // Récupérer toutes les sous-tâches pour annuler leurs notifications
+    final subTasks = _getAllSubTasks(id);
+    for (final subTask in subTasks) {
+      await NotificationService().cancelTaskNotification(subTask.id);
+    }
+    
     setState(() {
       // Supprimer la tâche et toutes ses sous-tâches
       _todos.removeWhere((todo) => todo.id == id || todo.parentId == id);
     });
+    
+    // Sauvegarder les données
+    await _saveData();
   }
 
   // Méthodes utilitaires pour les sous-tâches
@@ -510,6 +639,50 @@ class _TodoHomePageState extends State<TodoHomePage> {
             onPressed: _showThemeSelector,
             tooltip: 'Changer le thème',
           ),
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            onPressed: () async {
+              // Vérifier d'abord les permissions
+              await NotificationService().checkPermissions();
+              
+              // Envoyer la notification de test
+              await NotificationService().showTestNotification();
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Notification de test envoyée ! Vérifiez les logs pour les permissions.'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            },
+            tooltip: 'Tester les notifications',
+          ),
+          IconButton(
+            icon: const Icon(Icons.schedule),
+            onPressed: () async {
+              final pendingNotifications = await NotificationService().getPendingNotifications();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${pendingNotifications.length} notification(s) en attente'),
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            },
+            tooltip: 'Voir les notifications en attente',
+          ),
+          IconButton(
+            icon: const Icon(Icons.timer),
+            onPressed: () async {
+              await NotificationService().scheduleTestNotification();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Notification de test programmée pour dans 1 minute ! Vérifiez les logs.'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            },
+            tooltip: 'Tester notification programmée (10s)',
+          ),
         ],
       ),
       body: Column(
@@ -649,81 +822,81 @@ class _TodoHomePageState extends State<TodoHomePage> {
                       return Column(
                         children: [
                           Card(
-                            margin: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 4,
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 4,
+                        ),
+                        child: InkWell(
+                          onTap: () => _editTodo(todo),
+                          child: ListTile(
+                            leading: Checkbox(
+                              value: todo.isCompleted,
+                              onChanged: (_) => _toggleTodo(todo.id),
                             ),
-                            child: InkWell(
-                              onTap: () => _editTodo(todo),
-                              child: ListTile(
-                                leading: Checkbox(
-                                  value: todo.isCompleted,
-                                  onChanged: (_) => _toggleTodo(todo.id),
-                                ),
-                                title: Text(
-                                  todo.title,
-                                  style: TextStyle(
-                                    decoration: todo.isCompleted
-                                        ? TextDecoration.lineThrough
-                                        : null,
-                                    color: todo.isCompleted
-                                        ? Colors.grey
-                                        : null,
+                            title: Text(
+                              todo.title,
+                              style: TextStyle(
+                                decoration: todo.isCompleted
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                                color: todo.isCompleted
+                                    ? Colors.grey
+                                    : null,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (todo.description.isNotEmpty)
+                                  Text(
+                                    todo.description,
+                                    style: TextStyle(
+                                      color: todo.isCompleted ? Colors.grey : null,
+                                    ),
                                   ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                const SizedBox(height: 4),
+                                Row(
                                   children: [
-                                    if (todo.description.isNotEmpty)
-                                      Text(
-                                        todo.description,
-                                        style: TextStyle(
-                                          color: todo.isCompleted ? Colors.grey : null,
+                                    if (todo.dueDate != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: isOverdue 
+                                              ? Colors.red.withOpacity(0.1)
+                                              : Colors.blue.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: isOverdue ? Colors.red : Colors.blue,
+                                            fontWeight: FontWeight.w500,
+                                          ),
                                         ),
                                       ),
-                                    const SizedBox(height: 4),
-                                    Row(
-                                      children: [
-                                        if (todo.dueDate != null)
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: isOverdue 
-                                                  ? Colors.red.withOpacity(0.1)
-                                                  : Colors.blue.withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: isOverdue ? Colors.red : Colors.blue,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                          ),
-                                        const SizedBox(width: 8),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 2,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: _getPriorityColor(todo.priority).withOpacity(0.1),
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          child: Text(
-                                            _getPriorityText(todo.priority),
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: _getPriorityColor(todo.priority),
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _getPriorityColor(todo.priority).withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        _getPriorityText(todo.priority),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: _getPriorityColor(todo.priority),
+                                          fontWeight: FontWeight.w500,
                                         ),
+                                      ),
+                                    ),
                                         if (hasSubTasks) ...[
                                           const SizedBox(width: 8),
                                           Container(
@@ -800,6 +973,7 @@ class _AddTodoModalState extends State<AddTodoModal> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   DateTime? _selectedDate;
+  DateTime? _selectedReminder;
   Priority _selectedPriority = Priority.medium;
   Project? _selectedProject;
 
@@ -839,158 +1013,227 @@ class _AddTodoModalState extends State<AddTodoModal> {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SingleChildScrollView(
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Nouvelle Tâche',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Nouvelle Tâche',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              // Projet
-              DropdownButtonFormField<Project>(
-                value: _selectedProject,
-                decoration: const InputDecoration(
-                  labelText: 'Projet',
-                  border: OutlineInputBorder(),
                 ),
-                items: widget.projects.map((project) {
-                  return DropdownMenuItem(
-                    value: project,
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: project.color,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(project.name),
-                      ],
-                    ),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedProject = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              // Titre
-              TextField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Titre de la tâche *',
-                  border: OutlineInputBorder(),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
                 ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Projet
+            DropdownButtonFormField<Project>(
+              value: _selectedProject,
+              decoration: const InputDecoration(
+                labelText: 'Projet',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 16),
-              // Description
-              TextField(
-                controller: _descriptionController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Description (optionnel)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Date d'échéance
-              Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: () async {
-                        final date = await showDatePicker(
-                          context: context,
-                          initialDate: DateTime.now(),
-                          firstDate: DateTime.now(),
-                          lastDate: DateTime.now().add(const Duration(days: 365)),
-                        );
-                        if (date != null) {
-                          setState(() {
-                            _selectedDate = date;
-                          });
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
+              items: widget.projects.map((project) {
+                return DropdownMenuItem(
+                  value: project,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
-                          borderRadius: BorderRadius.circular(4),
+                          color: project.color,
+                          shape: BoxShape.circle,
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.calendar_today),
-                            const SizedBox(width: 8),
-                            Text(
-                              _selectedDate != null
-                                  ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                                  : 'Date d\'échéance (optionnel)',
-                              style: TextStyle(
-                                color: _selectedDate != null 
-                                    ? Colors.black 
-                                    : Colors.grey,
-                              ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(project.name),
+                    ],
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  _selectedProject = value;
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+            // Titre
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: 'Titre de la tâche *',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Description
+            TextField(
+              controller: _descriptionController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Description (optionnel)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Date d'échéance
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date != null) {
+                        setState(() {
+                          _selectedDate = date;
+                        });
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade400),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today),
+                          const SizedBox(width: 8),
+                          Text(
+                            _selectedDate != null
+                                ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                                : 'Date d\'échéance (optionnel)',
+                            style: TextStyle(
+                              color: _selectedDate != null 
+                                  ? Colors.black 
+                                  : Colors.grey,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                  if (_selectedDate != null)
-                    IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        setState(() {
-                          _selectedDate = null;
-                        });
-                      },
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              // Priorité
-              DropdownButtonFormField<Priority>(
-                value: _selectedPriority,
-                decoration: const InputDecoration(
-                  labelText: 'Priorité',
-                  border: OutlineInputBorder(),
                 ),
-                items: Priority.values.map((priority) {
-                  return DropdownMenuItem(
-                    value: priority,
-                    child: Text(getPriorityText(priority)),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      _selectedPriority = value;
-                    });
-                  }
-                },
+                if (_selectedDate != null)
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      setState(() {
+                        _selectedDate = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Rappel
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedReminder ?? DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date != null) {
+                        final time = await showTimePicker(
+                          context: context,
+                          initialTime: _selectedReminder != null 
+                              ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
+                              : TimeOfDay.now(),
+                        );
+                        if (time != null) {
+                          setState(() {
+                            _selectedReminder = DateTime(
+                              date.year,
+                              date.month,
+                              date.day,
+                              time.hour,
+                              time.minute,
+                            );
+                          });
+                        }
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade400),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.alarm),
+                          const SizedBox(width: 8),
+                          Text(
+                            _selectedReminder != null
+                                ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                                : 'Rappel (optionnel)',
+                            style: TextStyle(
+                              color: _selectedReminder != null 
+                                  ? Colors.black 
+                                  : Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (_selectedReminder != null)
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      setState(() {
+                        _selectedReminder = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Priorité
+            DropdownButtonFormField<Priority>(
+              value: _selectedPriority,
+              decoration: const InputDecoration(
+                labelText: 'Priorité',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 24),
+              items: Priority.values.map((priority) {
+                return DropdownMenuItem(
+                  value: priority,
+                    child: Text(getPriorityText(priority)),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _selectedPriority = value;
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 24),
               // Section Sous-tâches
               const Text(
                 'Sous-tâches (optionnel)',
@@ -1040,18 +1283,18 @@ class _AddTodoModalState extends State<AddTodoModal> {
                   },
                 ),
               const SizedBox(height: 24),
-              // Boutons
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Annuler'),
-                    ),
+            // Boutons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Annuler'),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton(
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
                       onPressed: () {
                         if (_titleController.text.trim().isEmpty || _selectedProject == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1059,28 +1302,29 @@ class _AddTodoModalState extends State<AddTodoModal> {
                           );
                           return;
                         }
-                        final newTodo = TodoItem(
-                          id: DateTime.now().millisecondsSinceEpoch,
-                          title: _titleController.text.trim(),
-                          description: _descriptionController.text.trim(),
-                          dueDate: _selectedDate,
-                          priority: _selectedPriority,
-                          projectId: _selectedProject!.id,
-                          isCompleted: false,
-                          parentId: null, // Tâche racine
-                          level: 0,
-                        );
+                                                        final newTodo = TodoItem(
+                              id: DateTime.now().millisecondsSinceEpoch,
+                              title: _titleController.text.trim(),
+                              description: _descriptionController.text.trim(),
+                              dueDate: _selectedDate,
+                              priority: _selectedPriority,
+                              projectId: _selectedProject!.id,
+                              isCompleted: false,
+                              parentId: null, // Tâche racine
+                              level: 0,
+                              reminder: _selectedReminder,
+                            );
                         Navigator.pop(context, {
                           'todo': newTodo,
                           'subTasks': _subTasks,
                         });
-                      },
-                      child: const Text('Ajouter'),
-                    ),
+                          },
+                    child: const Text('Ajouter'),
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
+          ],
           ),
         ),
       ),
@@ -1120,6 +1364,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
   late final TextEditingController _titleController;
   late final TextEditingController _descriptionController;
   late DateTime? _selectedDate;
+  late DateTime? _selectedReminder;
   late Priority _selectedPriority;
   late Project? _selectedProject;
 
@@ -1133,6 +1378,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
     _titleController = TextEditingController(text: widget.todo.title);
     _descriptionController = TextEditingController(text: widget.todo.description);
     _selectedDate = widget.todo.dueDate;
+    _selectedReminder = widget.todo.reminder;
     _selectedPriority = widget.todo.priority;
     _selectedProject = widget.projects.firstWhere(
       (project) => project.id == widget.todo.projectId,
@@ -1168,163 +1414,231 @@ class _EditTodoModalState extends State<EditTodoModal> {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SingleChildScrollView(
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Modifier la Tâche',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Modifier la Tâche',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              
-              // Projet
-              DropdownButtonFormField<Project>(
-                value: _selectedProject,
-                decoration: const InputDecoration(
-                  labelText: 'Projet',
-                  border: OutlineInputBorder(),
                 ),
-                items: widget.projects.map((project) {
-                  return DropdownMenuItem(
-                    value: project,
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: project.color,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(project.name),
-                      ],
-                    ),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedProject = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              
-              // Titre
-              TextField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Titre de la tâche *',
-                  border: OutlineInputBorder(),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
                 ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            
+            // Projet
+            DropdownButtonFormField<Project>(
+              value: _selectedProject,
+              decoration: const InputDecoration(
+                labelText: 'Projet',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 16),
-              
-              // Description
-              TextField(
-                controller: _descriptionController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Description (optionnel)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              
-              // Date d'échéance
-              Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: () async {
-                        final date = await showDatePicker(
-                          context: context,
-                          initialDate: _selectedDate ?? DateTime.now(),
-                          firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                          lastDate: DateTime.now().add(const Duration(days: 365)),
-                        );
-                        if (date != null) {
-                          setState(() {
-                            _selectedDate = date;
-                          });
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
+              items: widget.projects.map((project) {
+                return DropdownMenuItem(
+                  value: project,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade400),
-                          borderRadius: BorderRadius.circular(4),
+                          color: project.color,
+                          shape: BoxShape.circle,
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.calendar_today),
-                            const SizedBox(width: 8),
-                            Text(
-                              _selectedDate != null
-                                  ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                                  : 'Date d\'échéance (optionnel)',
-                              style: TextStyle(
-                                color: _selectedDate != null 
-                                    ? Colors.black 
-                                    : Colors.grey,
-                              ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(project.name),
+                    ],
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  _selectedProject = value;
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+            
+            // Titre
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: 'Titre de la tâche *',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // Description
+            TextField(
+              controller: _descriptionController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Description (optionnel)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // Date d'échéance
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedDate ?? DateTime.now(),
+                        firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date != null) {
+                        setState(() {
+                          _selectedDate = date;
+                        });
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade400),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today),
+                          const SizedBox(width: 8),
+                          Text(
+                            _selectedDate != null
+                                ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                                : 'Date d\'échéance (optionnel)',
+                            style: TextStyle(
+                              color: _selectedDate != null 
+                                  ? Colors.black 
+                                  : Colors.grey,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                  if (_selectedDate != null)
-                    IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        setState(() {
-                          _selectedDate = null;
-                        });
-                      },
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              
-              // Priorité
-              DropdownButtonFormField<Priority>(
-                value: _selectedPriority,
-                decoration: const InputDecoration(
-                  labelText: 'Priorité',
-                  border: OutlineInputBorder(),
                 ),
-                items: Priority.values.map((priority) {
-                  return DropdownMenuItem(
-                    value: priority,
-                    child: Text(getPriorityText(priority)),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      _selectedPriority = value;
-                    });
-                  }
-                },
+                if (_selectedDate != null)
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      setState(() {
+                        _selectedDate = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Rappel
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedReminder ?? DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (date != null) {
+                        final time = await showTimePicker(
+                          context: context,
+                          initialTime: _selectedReminder != null 
+                              ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
+                              : TimeOfDay.now(),
+                        );
+                        if (time != null) {
+                          setState(() {
+                            _selectedReminder = DateTime(
+                              date.year,
+                              date.month,
+                              date.day,
+                              time.hour,
+                              time.minute,
+                            );
+                          });
+                        }
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade400),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.alarm),
+                          const SizedBox(width: 8),
+                          Text(
+                            _selectedReminder != null
+                                ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                                : 'Rappel (optionnel)',
+                            style: TextStyle(
+                              color: _selectedReminder != null 
+                                  ? Colors.black 
+                                  : Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (_selectedReminder != null)
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      setState(() {
+                        _selectedReminder = null;
+                      });
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Priorité
+            DropdownButtonFormField<Priority>(
+              value: _selectedPriority,
+              decoration: const InputDecoration(
+                labelText: 'Priorité',
+                border: OutlineInputBorder(),
               ),
-              const SizedBox(height: 24),
+              items: Priority.values.map((priority) {
+                return DropdownMenuItem(
+                  value: priority,
+                    child: Text(getPriorityText(priority)),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _selectedPriority = value;
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 24),
               // Section Sous-tâches
               if (widget.todo.canHaveSubTasks) ...[
                 const Text(
@@ -1381,6 +1695,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                                   isCompleted: !subTask.isCompleted,
                                   parentId: subTask.parentId,
                                   level: subTask.level,
+                                  reminder: subTask.reminder,
                                 );
                               }
                             });
@@ -1398,18 +1713,18 @@ class _EditTodoModalState extends State<EditTodoModal> {
                 ),
                 const SizedBox(height: 24),
               ],
-              // Boutons
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Annuler'),
-                    ),
+            // Boutons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Annuler'),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton(
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
                       onPressed: () {
                         if (_titleController.text.trim().isEmpty || _selectedProject == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1417,7 +1732,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                           );
                           return;
                         }
-                        final updatedTodo = TodoItem(
+                                                    final updatedTodo = TodoItem(
                           id: widget.todo.id,
                           title: _titleController.text.trim(),
                           description: _descriptionController.text.trim(),
@@ -1427,13 +1742,14 @@ class _EditTodoModalState extends State<EditTodoModal> {
                           isCompleted: widget.todo.isCompleted,
                           parentId: widget.todo.parentId, // Conserve le parent existant
                           level: widget.todo.level, // Conserve le niveau existant
+                          reminder: _selectedReminder,
                         );
-                        Navigator.pop(context, {'todo': updatedTodo});
-                      },
-                      child: const Text('Sauvegarder'),
-                    ),
+                            Navigator.pop(context, {'todo': updatedTodo});
+                          },
+                    child: const Text('Sauvegarder'),
                   ),
-                ],
+                ),
+              ],
               ),
               const SizedBox(height: 24),
               // Bouton de suppression
@@ -1606,6 +1922,26 @@ class Project {
     required this.color,
     required this.isDefault,
   });
+
+  // Convertir en Map pour la sauvegarde
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'color': color.value,
+      'isDefault': isDefault,
+    };
+  }
+
+  // Créer depuis une Map
+  factory Project.fromMap(Map<String, dynamic> map) {
+    return Project(
+      id: map['id'],
+      name: map['name'],
+      color: Color(map['color']),
+      isDefault: map['isDefault'],
+    );
+  }
 }
 
 class TodoItem {
@@ -1618,6 +1954,7 @@ class TodoItem {
   bool isCompleted;
   final int? parentId; // ID de la tâche parente (null pour les tâches racines)
   final int level; // Niveau de profondeur (0 = tâche racine, 1-3 = sous-tâches)
+  final DateTime? reminder; // Date et heure du rappel
 
   TodoItem({
     required this.id,
@@ -1629,6 +1966,7 @@ class TodoItem {
     required this.isCompleted,
     this.parentId,
     this.level = 0,
+    this.reminder,
   });
 
   // Méthode pour créer une sous-tâche
@@ -1664,4 +2002,36 @@ class TodoItem {
 
   // Méthode pour vérifier si on peut ajouter des sous-tâches
   bool get canHaveSubTasks => level < 3;
+
+  // Convertir en Map pour la sauvegarde
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'description': description,
+      'dueDate': dueDate?.millisecondsSinceEpoch,
+      'priority': priority.index,
+      'projectId': projectId,
+      'isCompleted': isCompleted,
+      'parentId': parentId,
+      'level': level,
+      'reminder': reminder?.millisecondsSinceEpoch,
+    };
+  }
+
+  // Créer depuis une Map
+  factory TodoItem.fromMap(Map<String, dynamic> map) {
+    return TodoItem(
+      id: map['id'],
+      title: map['title'],
+      description: map['description'],
+      dueDate: map['dueDate'] != null ? DateTime.fromMillisecondsSinceEpoch(map['dueDate']) : null,
+      priority: Priority.values[map['priority']],
+      projectId: map['projectId'],
+      isCompleted: map['isCompleted'],
+      parentId: map['parentId'],
+      level: map['level'] ?? 0,
+      reminder: map['reminder'] != null ? DateTime.fromMillisecondsSinceEpoch(map['reminder']) : null,
+    );
+  }
 }
