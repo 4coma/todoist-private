@@ -43,6 +43,23 @@ dependencies:
   
   # Persistance des préférences utilisateur
   shared_preferences: ^2.2.2
+  
+  # === NOUVELLES DÉPENDANCES POUR UX MODERNE ===
+  
+  # Animations fluides et modernes
+  flutter_animate: ^4.5.0
+  
+  # Icônes modernes et variées
+  phosphor_flutter: ^2.0.0
+  
+  # Composants UI modernes avec animations
+  flutter_staggered_animations: ^1.1.1
+  
+  # Effets de glassmorphism et gradients
+  glassmorphism: ^3.0.0
+  
+  # Composants de design moderne
+  flutter_slidable: ^3.0.1
 
 dev_dependencies:
   flutter_test:

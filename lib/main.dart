@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'themes.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,6 +70,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   List<TodoItem> _todos = [];
   Project? _selectedProject;
   SortType _currentSort = SortType.dateAdded;
+  bool _isSidebarOpen = false;
 
   // Set pour suivre les tâches dépliées (affichant leurs sous-tâches)
   final Set<int> _expandedTasks = {};
@@ -469,51 +471,103 @@ class _TodoHomePageState extends State<TodoHomePage> {
   void _showThemeSelector() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(24),
+          ),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Choisir un thème',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            // Drag handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _buildThemeOption('Bleu', AppThemes.blueTheme, Colors.blue),
-                _buildThemeOption('Vert', AppThemes.greenTheme, Colors.green),
-                _buildThemeOption('Violet', AppThemes.purpleTheme, Colors.purple),
-                _buildThemeOption('Orange', AppThemes.orangeTheme, Colors.orange),
-                _buildThemeOption('Sombre', AppThemes.darkTheme, Colors.grey.shade800),
-                _buildThemeOption('Minimal', AppThemes.minimalTheme, Colors.grey),
-              ],
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Choisir un thème',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  letterSpacing: -0.5,
+                ),
+              ),
             ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  _buildModernThemeOption('Bleu', AppThemes.blueTheme, const Color(0xFF2563EB)),
+                  _buildModernThemeOption('Vert', AppThemes.greenTheme, const Color(0xFF059669)),
+                  _buildModernThemeOption('Violet', AppThemes.purpleTheme, const Color(0xFF7C3AED)),
+                  _buildModernThemeOption('Orange', AppThemes.orangeTheme, const Color(0xFFEA580C)),
+                  _buildModernThemeOption('Gradient', AppThemes.gradientTheme, const Color(0xFF667EEA)),
+                  _buildModernThemeOption('Sombre', AppThemes.darkTheme, const Color(0xFF1F2937)),
+                  _buildModernThemeOption('Minimal', AppThemes.minimalTheme, const Color(0xFF6B7280)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildThemeOption(String name, ThemeData theme, Color color) {
+  Widget _buildModernThemeOption(String name, ThemeData theme, Color color) {
     return InkWell(
       onTap: () {
         widget.onThemeChanged(theme);
         Navigator.pop(context);
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withOpacity(0.3)),
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.1),
+              color.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: color.withOpacity(0.2),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Text(
           name,
-          style: TextStyle(color: color, fontWeight: FontWeight.w500),
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            letterSpacing: 0.3,
+          ),
         ),
+      ).animate().scale(
+        duration: 150.ms,
+        curve: Curves.easeOutCubic,
       ),
     );
   }
@@ -596,166 +650,116 @@ class _TodoHomePageState extends State<TodoHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: const Text('Ma Liste de Tâches'),
-        centerTitle: true,
+        title: Text(_selectedProject?.name ?? 'Toutes les tâches'),
+        automaticallyImplyLeading: true,
         actions: [
-          // Indicateur de tri actuel
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            margin: const EdgeInsets.only(right: 8),
-            decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.sort,
-                  size: 16,
-                  color: Theme.of(context).primaryColor,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  _getSortDisplayName(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).primaryColor,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Bouton de tri
-          IconButton(
-            icon: const Icon(Icons.sort),
-            onPressed: _showSortDialog,
-            tooltip: 'Trier les tâches',
-          ),
           IconButton(
             icon: const Icon(Icons.palette),
             onPressed: _showThemeSelector,
-            tooltip: 'Changer le thème',
-          ),
-          IconButton(
-            icon: const Icon(Icons.flash_on),
-            onPressed: () async {
-              await NotificationService.showTestNotification();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Test notification immédiate envoyée !'),
-                  duration: Duration(seconds: 3),
-                ),
-              );
-            },
-            tooltip: 'Test notification immédiate',
-          ),
-          IconButton(
-            icon: const Icon(Icons.timer),
-            onPressed: () async {
-              await NotificationService.scheduleQuickTestNotification();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Test rapide programmé pour dans 10 secondes !'),
-                  duration: Duration(seconds: 3),
-                ),
-              );
-            },
-            tooltip: 'Tester notification programmée (10s)',
           ),
         ],
       ),
+      drawer: Drawer(
+        child: Column(
+          children: [
+            DrawerHeader(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                  const SizedBox(width: 16),
+                  Text(
+                    'Projets',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.list),
+              title: Text('Toutes les tâches'),
+              selected: _selectedProject == null,
+              onTap: () {
+                setState(() {
+                  _selectedProject = null;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            Divider(),
+            ..._projects.map((project) => ListTile(
+              leading: Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: project.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              title: Text(project.name),
+              subtitle: Text('${_todos.where((todo) => todo.projectId == project.id).length} tâches'),
+              selected: _selectedProject?.id == project.id,
+              onTap: () {
+                setState(() {
+                  _selectedProject = project;
+                });
+                Navigator.pop(context);
+              },
+            )),
+            Divider(),
+            ListTile(
+              leading: Icon(Icons.add),
+              title: Text('Nouveau projet'),
+              onTap: () {
+                Navigator.pop(context);
+                _addProject();
+              },
+            ),
+          ],
+        ),
+      ),
       body: Column(
         children: [
-          // Sélecteur de projets
+          // Contrôles de tri
           Container(
-            height: 60,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Expanded(
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _projects.length,
-                    itemBuilder: (context, index) {
-                      final project = _projects[index];
-                      final isSelected = _selectedProject?.id == project.id;
-                      final todoCount = _todos.where((todo) => todo.projectId == project.id).length;
-                      
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: InkWell(
-                          onTap: () {
-                            setState(() {
-                              _selectedProject = project;
-                            });
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: isSelected 
-                                  ? project.color.withOpacity(0.2)
-                                  : Colors.grey.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: isSelected ? project.color : Colors.grey.shade300,
-                                width: isSelected ? 2 : 1,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: project.color,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  project.name,
-                                  style: TextStyle(
-                                    color: isSelected ? project.color : Colors.grey.shade700,
-                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: isSelected ? project.color : Colors.grey.shade400,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    '$todoCount',
-                                    style: TextStyle(
-                                      color: isSelected ? Colors.white : Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.sort, size: 16),
+                      const SizedBox(width: 6),
+                      Text(_getSortDisplayName()),
+                    ],
                   ),
                 ),
+                const SizedBox(width: 12),
                 IconButton(
-                  icon: const Icon(Icons.add),
-                  onPressed: _addProject,
-                  tooltip: 'Ajouter un projet',
+                  icon: const Icon(Icons.sort),
+                  onPressed: _showSortDialog,
                 ),
+                const Spacer(),
+                Text('${_filteredTodos.length} tâches'),
               ],
             ),
           ),
-          
           // Liste des tâches
           Expanded(
             child: _filteredTodos.isEmpty
@@ -763,27 +767,13 @@ class _TodoHomePageState extends State<TodoHomePage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          Icons.task_alt,
-                          size: 64,
-                          color: Colors.grey,
-                        ),
+                        Icon(Icons.task_alt, size: 64, color: Colors.grey),
                         const SizedBox(height: 16),
                         Text(
                           _selectedProject != null
                               ? 'Aucune tâche dans "${_selectedProject!.name}"'
                               : 'Aucune tâche pour le moment',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            color: Colors.grey,
-                          ),
-                        ),
-                        const Text(
-                          'Ajoutez votre première tâche !',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey,
-                          ),
+                          style: TextStyle(fontSize: 18, color: Colors.grey),
                         ),
                       ],
                     ),
@@ -796,7 +786,6 @@ class _TodoHomePageState extends State<TodoHomePage> {
                           todo.dueDate!.isBefore(DateTime.now()) && 
                           !todo.isCompleted;
                       
-                      // Vérifier si cette tâche a des sous-tâches
                       final hasSubTasks = _hasSubTasks(todo.id);
                       final isExpanded = _expandedTasks.contains(todo.id);
                       final subTasks = isExpanded ? _getSubTasks(todo.id) : [];
@@ -804,127 +793,90 @@ class _TodoHomePageState extends State<TodoHomePage> {
                       return Column(
                         children: [
                           Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 4,
-                        ),
-                        child: InkWell(
-                          onTap: () => _editTodo(todo),
-                          child: ListTile(
-                            leading: Checkbox(
-                              value: todo.isCompleted,
-                              onChanged: (_) => _toggleTodo(todo.id),
-                            ),
-                            title: Text(
-                              todo.title,
-                              style: TextStyle(
-                                decoration: todo.isCompleted
-                                    ? TextDecoration.lineThrough
-                                    : null,
-                                color: todo.isCompleted
-                                    ? Colors.grey
-                                    : null,
+                            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                            child: ListTile(
+                              leading: Checkbox(
+                                value: todo.isCompleted,
+                                onChanged: (_) => _toggleTodo(todo.id),
                               ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (todo.description.isNotEmpty)
-                                  Text(
-                                    todo.description,
-                                    style: TextStyle(
-                                      color: todo.isCompleted ? Colors.grey : null,
-                                    ),
-                                  ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    if (todo.dueDate != null)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 2,
+                              title: Text(
+                                todo.title,
+                                style: TextStyle(
+                                  decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
+                                  color: todo.isCompleted ? Colors.grey : null,
+                                ),
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (todo.description.isNotEmpty)
+                                    Text(todo.description),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      if (todo.dueDate != null)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: isOverdue ? Colors.red.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: Text(
+                                            '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: isOverdue ? Colors.red : Colors.blue,
+                                            ),
+                                          ),
                                         ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                         decoration: BoxDecoration(
-                                          color: isOverdue 
-                                              ? Colors.red.withOpacity(0.1)
-                                              : Colors.blue.withOpacity(0.1),
+                                          color: _getPriorityColor(todo.priority).withOpacity(0.1),
                                           borderRadius: BorderRadius.circular(12),
                                         ),
                                         child: Text(
-                                          '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
+                                          _getPriorityText(todo.priority),
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: isOverdue ? Colors.red : Colors.blue,
-                                            fontWeight: FontWeight.w500,
+                                            color: _getPriorityColor(todo.priority),
                                           ),
                                         ),
                                       ),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: _getPriorityColor(todo.priority).withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        _getPriorityText(todo.priority),
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: _getPriorityColor(todo.priority),
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                                        if (hasSubTasks) ...[
-                                          const SizedBox(width: 8),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: Colors.purple.withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              '${_getSubTasks(todo.id).length} sous-tâches',
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.purple,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
+                                      if (hasSubTasks) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.purple.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(12),
                                           ),
-                                        ],
+                                          child: Text(
+                                            '${_getSubTasks(todo.id).length} sous-tâches',
+                                            style: TextStyle(fontSize: 12, color: Colors.purple),
+                                          ),
+                                        ),
                                       ],
-                                    ),
-                                  ],
-                                ),
-                                              trailing: hasSubTasks ? IconButton(
-                iconSize: 24,
-                icon: Icon(
-                  isExpanded ? Icons.expand_less : Icons.expand_more,
-                  color: Colors.purple,
-                ),
-                onPressed: () {
-                  setState(() {
-                    if (isExpanded) {
-                      _expandedTasks.remove(todo.id);
-                    } else {
-                      _expandedTasks.add(todo.id);
-                    }
-                  });
-                },
-                tooltip: isExpanded ? 'Masquer les sous-tâches' : 'Afficher les sous-tâches',
-              ) : null,
+                                    ],
+                                  ),
+                                ],
                               ),
+                              trailing: hasSubTasks ? IconButton(
+                                icon: Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
+                                onPressed: () {
+                                  setState(() {
+                                    if (isExpanded) {
+                                      _expandedTasks.remove(todo.id);
+                                    } else {
+                                      _expandedTasks.add(todo.id);
+                                    }
+                                  });
+                                },
+                              ) : null,
+                              onTap: () => _editTodo(todo),
                             ),
                           ),
-                          // Afficher les sous-tâches si la tâche est dépliée
                           if (isExpanded && subTasks.isNotEmpty)
                             ...subTasks.map((subTask) => _buildSubTaskItem(subTask, todo.id)),
                         ],
@@ -937,6 +889,80 @@ class _TodoHomePageState extends State<TodoHomePage> {
       floatingActionButton: FloatingActionButton(
         onPressed: _addTodo,
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  Widget _buildProjectItem(Project project, {bool isAllTasks = false}) {
+    final isSelected = _selectedProject?.id == project.id || (isAllTasks && _selectedProject == null);
+    final todoCount = isAllTasks 
+        ? _todos.where((todo) => todo.isRootTask).length
+        : _todos.where((todo) => todo.projectId == project.id).length;
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            if (isAllTasks) {
+              _selectedProject = null;
+            } else {
+              _selectedProject = project;
+            }
+          });
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected 
+                ? project.color.withOpacity(0.1)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected ? project.color : Colors.transparent,
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: project.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  project.name,
+                  style: TextStyle(
+                    color: isSelected ? project.color : Theme.of(context).colorScheme.onSurface,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isSelected ? project.color : Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$todoCount',
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.grey.shade700,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
