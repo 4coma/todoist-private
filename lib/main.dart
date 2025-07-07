@@ -3,6 +3,7 @@ import 'themes.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'services/timer_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -75,10 +76,43 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Set pour suivre les tâches dépliées (affichant leurs sous-tâches)
   final Set<int> _expandedTasks = {};
 
+  final TimerService _timerService = TimerService();
+
   @override
   void initState() {
     super.initState();
+    _timerService.addListener(_onTimerTick);
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _timerService.removeListener(_onTimerTick);
+    super.dispose();
+  }
+
+  void _onTimerTick() {
+    if (_timerService.isRunning && _timerService.currentTaskId != -1) {
+      setState(() {}); // Pour rafraîchir l'affichage du temps en cours
+    }
+  }
+
+  void _handlePlayPause(TodoItem todo) {
+    if (_timerService.isTaskRunning(todo.id)) {
+      final seconds = _timerService.elapsedSeconds;
+      setState(() {
+        final index = _todos.indexWhere((t) => t.id == todo.id);
+        if (index != -1) {
+          _todos[index].elapsedSeconds += seconds;
+        }
+      });
+      _timerService.pauseTimer();
+      _saveData();
+    } else {
+      final alreadyElapsedSeconds = todo.elapsedSeconds;
+      _timerService.startTimer(todo.id, alreadyElapsedSeconds: alreadyElapsedSeconds);
+    }
+    setState(() {});
   }
 
   // Charger les données sauvegardées
@@ -166,6 +200,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
               parentId: newTodo.id, // Lier à la tâche parente
               level: subTask.level,
               reminder: subTask.reminder,
+              estimatedMinutes: subTask.estimatedMinutes,
+              elapsedMinutes: subTask.elapsedMinutes,
+              elapsedSeconds: subTask.elapsedSeconds,
             );
             _todos.add(updatedSubTask);
           }
@@ -422,42 +459,136 @@ class _TodoHomePageState extends State<TodoHomePage> {
           child: InkWell(
             onTap: () => _editTodo(subTask),
             child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
               leading: Checkbox(
                 value: subTask.isCompleted,
                 onChanged: (_) => _toggleTodo(subTask.id),
               ),
-              title: Text(
-                subTask.title,
-                style: TextStyle(
-                  decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
-                  color: subTask.isCompleted ? Colors.grey : null,
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          subTask.title,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
+                            color: subTask.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (subTask.dueDate != null) ...[
+                        const SizedBox(width: 8),
+                        Icon(Icons.calendar_today, size: 14),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${subTask.dueDate!.day}/${subTask.dueDate!.month}/${subTask.dueDate!.year}',
+                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                        ),
+                      ],
+                      if (subTask.reminder != null) ...[
+                        const SizedBox(width: 8),
+                        Icon(Icons.alarm, size: 14),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${subTask.reminder!.day}/${subTask.reminder!.month}/${subTask.reminder!.year} à ${subTask.reminder!.hour.toString().padLeft(2, '0')}:${subTask.reminder!.minute.toString().padLeft(2, '0')}',
+                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 10,
+                  runSpacing: 2,
+                  children: [
+                    if (subTask.estimatedMinutes != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.timer, size: 15),
+                          const SizedBox(width: 2),
+                          Text('Estimé : ${subTask.estimatedTimeText}', style: const TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ...(TimerService().isTaskRunning(subTask.id)
+                      ? [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.play_circle, size: 15, color: Colors.green),
+                              const SizedBox(width: 2),
+                              Text(
+                                _formatElapsedTime(subTask.elapsedSeconds + TimerService().elapsedSeconds),
+                                style: const TextStyle(fontSize: 13, color: Colors.green),
+                              ),
+                            ],
+                          )
+                        ]
+                      : subTask.elapsedSeconds > 0
+                        ? [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.timelapse, size: 15),
+                                const SizedBox(width: 2),
+                                Text('Passé : ${_formatElapsedTime(subTask.elapsedSeconds)}', style: const TextStyle(fontSize: 12)),
+                              ],
+                            )
+                          ]
+                        : []),
+                    if (hasNestedSubTasks)
+                      Container(
+                        margin: const EdgeInsets.only(left: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.purple.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${_getSubTasks(subTask.id).length} sous-tâches',
+                          style: TextStyle(fontSize: 12, color: Colors.purple),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-              subtitle: subTask.description.isNotEmpty
-                ? Text(
-                    subTask.description,
-                    style: TextStyle(
-                      color: subTask.isCompleted ? Colors.grey : null,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: Icon(TimerService().isTaskRunning(subTask.id) ? Icons.pause : Icons.play_arrow),
+                    tooltip: TimerService().isTaskRunning(subTask.id)
+                        ? 'Mettre en pause le suivi du temps'
+                        : 'Démarrer le suivi du temps',
+                    onPressed: () => _handlePlayPause(subTask),
+                  ),
+                  if (hasNestedSubTasks)
+                    IconButton(
+                      iconSize: 24,
+                      icon: Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.purple),
+                      onPressed: () {
+                        setState(() {
+                          if (isExpanded) {
+                            _expandedTasks.remove(subTask.id);
+                          } else {
+                            _expandedTasks.add(subTask.id);
+                          }
+                        });
+                      },
+                      tooltip: isExpanded ? 'Masquer les sous-tâches' : 'Afficher les sous-tâches',
                     ),
-                  )
-                : null,
-              trailing: hasNestedSubTasks ? IconButton(
-                iconSize: 24,
-                icon: Icon(
-                  isExpanded ? Icons.expand_less : Icons.expand_more,
-                  color: Colors.purple,
-                ),
-                onPressed: () {
-                  setState(() {
-                    if (isExpanded) {
-                      _expandedTasks.remove(subTask.id);
-                    } else {
-                      _expandedTasks.add(subTask.id);
-                    }
-                  });
-                },
-                tooltip: isExpanded ? 'Masquer les sous-tâches' : 'Afficher les sous-tâches',
-              ) : null,
+                ],
+              ),
             ),
           ),
         ),
@@ -795,85 +926,134 @@ class _TodoHomePageState extends State<TodoHomePage> {
                           Card(
                             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                             child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                               leading: Checkbox(
                                 value: todo.isCompleted,
                                 onChanged: (_) => _toggleTodo(todo.id),
                               ),
-                              title: Text(
-                                todo.title,
-                                style: TextStyle(
-                                  decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
-                                  color: todo.isCompleted ? Colors.grey : null,
-                                ),
-                              ),
-                              subtitle: Column(
+                              title: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  if (todo.description.isNotEmpty)
-                                    Text(todo.description),
-                                  const SizedBox(height: 4),
                                   Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
                                     children: [
-                                      if (todo.dueDate != null)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: isOverdue ? Colors.red.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          child: Text(
-                                            '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: isOverdue ? Colors.red : Colors.blue,
-                                            ),
-                                          ),
-                                        ),
-                                      const SizedBox(width: 8),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: _getPriorityColor(todo.priority).withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
+                                      Flexible(
                                         child: Text(
-                                          _getPriorityText(todo.priority),
+                                          todo.title,
                                           style: TextStyle(
-                                            fontSize: 12,
-                                            color: _getPriorityColor(todo.priority),
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
+                                            color: todo.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
                                           ),
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                      if (hasSubTasks) ...[
+                                      if (todo.dueDate != null) ...[
                                         const SizedBox(width: 8),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: Colors.purple.withOpacity(0.1),
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          child: Text(
-                                            '${_getSubTasks(todo.id).length} sous-tâches',
-                                            style: TextStyle(fontSize: 12, color: Colors.purple),
-                                          ),
+                                        Icon(Icons.calendar_today, size: 14),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
+                                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                                        ),
+                                      ],
+                                      if (todo.reminder != null) ...[
+                                        const SizedBox(width: 8),
+                                        Icon(Icons.alarm, size: 14),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '${todo.reminder!.day}/${todo.reminder!.month}/${todo.reminder!.year} à ${todo.reminder!.hour.toString().padLeft(2, '0')}:${todo.reminder!.minute.toString().padLeft(2, '0')}',
+                                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
                                         ),
                                       ],
                                     ],
                                   ),
                                 ],
                               ),
-                              trailing: hasSubTasks ? IconButton(
-                                icon: Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
-                                onPressed: () {
-                                  setState(() {
-                                    if (isExpanded) {
-                                      _expandedTasks.remove(todo.id);
-                                    } else {
-                                      _expandedTasks.add(todo.id);
-                                    }
-                                  });
-                                },
-                              ) : null,
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Wrap(
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 10,
+                                  runSpacing: 2,
+                                  children: [
+                                    if (todo.estimatedMinutes != null)
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.timer, size: 15),
+                                          const SizedBox(width: 2),
+                                          Text('Estimé : ${todo.estimatedTimeText}', style: const TextStyle(fontSize: 12)),
+                                        ],
+                                      ),
+                                    ...(TimerService().isTaskRunning(todo.id)
+                                      ? [
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(Icons.play_circle, size: 15, color: Colors.green),
+                                              const SizedBox(width: 2),
+                                              Text(
+                                                _formatElapsedTime(todo.elapsedSeconds + TimerService().elapsedSeconds),
+                                                style: const TextStyle(fontSize: 13, color: Colors.green),
+                                              ),
+                                            ],
+                                          )
+                                        ]
+                                      : todo.elapsedSeconds > 0
+                                        ? [
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(Icons.timelapse, size: 15),
+                                                const SizedBox(width: 2),
+                                                Text('Passé : ${_formatElapsedTime(todo.elapsedSeconds)}', style: const TextStyle(fontSize: 12)),
+                                              ],
+                                            )
+                                          ]
+                                        : []),
+                                    if (hasSubTasks)
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 4),
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.purple.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          '${_getSubTasks(todo.id).length} sous-tâches',
+                                          style: TextStyle(fontSize: 12, color: Colors.purple),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: Icon(TimerService().isTaskRunning(todo.id) ? Icons.pause : Icons.play_arrow),
+                                    tooltip: TimerService().isTaskRunning(todo.id)
+                                        ? 'Mettre en pause le suivi du temps'
+                                        : 'Démarrer le suivi du temps',
+                                    onPressed: () => _handlePlayPause(todo),
+                                  ),
+                                  if (hasSubTasks)
+                                    IconButton(
+                                      icon: Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
+                                      onPressed: () {
+                                        setState(() {
+                                          if (isExpanded) {
+                                            _expandedTasks.remove(todo.id);
+                                          } else {
+                                            _expandedTasks.add(todo.id);
+                                          }
+                                        });
+                                      },
+                                    ),
+                                ],
+                              ),
                               onTap: () => _editTodo(todo),
                             ),
                           ),
@@ -980,6 +1160,7 @@ class AddTodoModal extends StatefulWidget {
 class _AddTodoModalState extends State<AddTodoModal> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _estimatedTimeController = TextEditingController();
   DateTime? _selectedDate;
   DateTime? _selectedReminder;
   Priority _selectedPriority = Priority.medium;
@@ -1007,6 +1188,9 @@ class _AddTodoModalState extends State<AddTodoModal> {
           isCompleted: false,
           parentId: null, // Sera mis à jour quand la tâche parente sera créée
           level: 1, // Sous-tâche de niveau 1
+          estimatedMinutes: null,
+          elapsedMinutes: 0,
+          elapsedSeconds: 0,
         );
         _subTasks.add(subTask);
         _subTaskController.clear();
@@ -1097,127 +1281,103 @@ class _AddTodoModalState extends State<AddTodoModal> {
             ),
             const SizedBox(height: 16),
             // Date d'échéance
-            Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now(),
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 365)),
-                      );
-                      if (date != null) {
-                        setState(() {
-                          _selectedDate = date;
-                        });
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade400),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.calendar_today),
-                          const SizedBox(width: 8),
-                          Text(
-                            _selectedDate != null
-                                ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                                : 'Date d\'échéance (optionnel)',
-                            style: TextStyle(
-                              color: _selectedDate != null 
-                                  ? Colors.black 
-                                  : Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (_selectedDate != null)
-                  IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      setState(() {
-                        _selectedDate = null;
-                      });
-                    },
-                  ),
-              ],
+            TextField(
+              readOnly: true,
+              controller: TextEditingController(
+                text: _selectedDate != null
+                    ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                    : '',
+              ),
+              onTap: () async {
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: _selectedDate ?? DateTime.now(),
+                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                if (date != null) {
+                  setState(() {
+                    _selectedDate = date;
+                  });
+                }
+              },
+              decoration: InputDecoration(
+                labelText: 'Date d\'échéance (optionnel)',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.calendar_today),
+                suffixIcon: _selectedDate != null
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          setState(() {
+                            _selectedDate = null;
+                          });
+                        },
+                      )
+                    : null,
+              ),
+              style: TextStyle(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white
+                    : Colors.black,
+              ),
             ),
             const SizedBox(height: 16),
             // Rappel
-            Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedReminder ?? DateTime.now(),
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 365)),
+            TextField(
+              readOnly: true,
+              controller: TextEditingController(
+                text: _selectedReminder != null
+                    ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                    : '',
+              ),
+              onTap: () async {
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: _selectedReminder ?? DateTime.now(),
+                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                if (date != null) {
+                  final time = await showTimePicker(
+                    context: context,
+                    initialTime: _selectedReminder != null
+                        ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
+                        : TimeOfDay.now(),
+                  );
+                  if (time != null) {
+                    setState(() {
+                      _selectedReminder = DateTime(
+                        date.year,
+                        date.month,
+                        date.day,
+                        time.hour,
+                        time.minute,
                       );
-                      if (date != null) {
-                        final time = await showTimePicker(
-                          context: context,
-                          initialTime: _selectedReminder != null 
-                              ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
-                              : TimeOfDay.now(),
-                        );
-                        if (time != null) {
+                    });
+                  }
+                }
+              },
+              decoration: InputDecoration(
+                labelText: 'Rappel (optionnel)',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.alarm),
+                suffixIcon: _selectedReminder != null
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
                           setState(() {
-                            _selectedReminder = DateTime(
-                              date.year,
-                              date.month,
-                              date.day,
-                              time.hour,
-                              time.minute,
-                            );
+                            _selectedReminder = null;
                           });
-                        }
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade400),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.alarm),
-                          const SizedBox(width: 8),
-                          Text(
-                            _selectedReminder != null
-                                ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
-                                : 'Rappel (optionnel)',
-                            style: TextStyle(
-                              color: _selectedReminder != null 
-                                  ? Colors.black 
-                                  : Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (_selectedReminder != null)
-                  IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      setState(() {
-                        _selectedReminder = null;
-                      });
-                    },
-                  ),
-              ],
+                        },
+                      )
+                    : null,
+              ),
+              style: TextStyle(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white
+                    : Colors.black,
+              ),
             ),
             const SizedBox(height: 16),
             // Priorité
@@ -1240,6 +1400,18 @@ class _AddTodoModalState extends State<AddTodoModal> {
                   });
                 }
               },
+            ),
+            const SizedBox(height: 16),
+            // Temps estimé
+            TextField(
+              controller: _estimatedTimeController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Temps estimé (en minutes, optionnel)',
+                border: OutlineInputBorder(),
+                hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
+                prefixIcon: Icon(Icons.timer),
+              ),
             ),
             const SizedBox(height: 24),
               // Section Sous-tâches
@@ -1310,6 +1482,26 @@ class _AddTodoModalState extends State<AddTodoModal> {
                           );
                           return;
                         }
+                        
+                        // Parser le temps estimé
+                        int? estimatedMinutes;
+                        if (_estimatedTimeController.text.trim().isNotEmpty) {
+                          try {
+                            estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+                            if (estimatedMinutes <= 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
+                              );
+                              return;
+                            }
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
+                            );
+                            return;
+                          }
+                        }
+                        
                             final newTodo = TodoItem(
                               id: DateTime.now().millisecondsSinceEpoch,
                               title: _titleController.text.trim(),
@@ -1321,6 +1513,9 @@ class _AddTodoModalState extends State<AddTodoModal> {
                               parentId: null, // Tâche racine
                               level: 0,
                               reminder: _selectedReminder,
+                              estimatedMinutes: estimatedMinutes,
+                              elapsedMinutes: 0,
+                              elapsedSeconds: 0,
                             );
                         Navigator.pop(context, {
                           'todo': newTodo,
@@ -1371,6 +1566,7 @@ class EditTodoModal extends StatefulWidget {
 class _EditTodoModalState extends State<EditTodoModal> {
   late final TextEditingController _titleController;
   late final TextEditingController _descriptionController;
+  late final TextEditingController _estimatedTimeController;
   late DateTime? _selectedDate;
   late DateTime? _selectedReminder;
   late Priority _selectedPriority;
@@ -1385,6 +1581,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
     super.initState();
     _titleController = TextEditingController(text: widget.todo.title);
     _descriptionController = TextEditingController(text: widget.todo.description);
+    _estimatedTimeController = TextEditingController(text: widget.todo.estimatedMinutes?.toString() ?? '');
     _selectedDate = widget.todo.dueDate;
     _selectedReminder = widget.todo.reminder;
     _selectedPriority = widget.todo.priority;
@@ -1401,6 +1598,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
         final subTask = widget.todo.createSubTask(
           title: _subTaskController.text.trim(),
           description: '',
+          estimatedMinutes: null,
         );
         widget.onAddSubTask(subTask);
         _subTaskController.clear();
@@ -1502,127 +1700,103 @@ class _EditTodoModalState extends State<EditTodoModal> {
             const SizedBox(height: 16),
             
             // Date d'échéance
-            Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedDate ?? DateTime.now(),
-                        firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                        lastDate: DateTime.now().add(const Duration(days: 365)),
-                      );
-                      if (date != null) {
-                        setState(() {
-                          _selectedDate = date;
-                        });
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade400),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.calendar_today),
-                          const SizedBox(width: 8),
-                          Text(
-                            _selectedDate != null
-                                ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                                : 'Date d\'échéance (optionnel)',
-                            style: TextStyle(
-                              color: _selectedDate != null 
-                                  ? Colors.black 
-                                  : Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (_selectedDate != null)
-                  IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      setState(() {
-                        _selectedDate = null;
-                      });
-                    },
-                  ),
-              ],
+            TextField(
+              readOnly: true,
+              controller: TextEditingController(
+                text: _selectedDate != null
+                    ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                    : '',
+              ),
+              onTap: () async {
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: _selectedDate ?? DateTime.now(),
+                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                if (date != null) {
+                  setState(() {
+                    _selectedDate = date;
+                  });
+                }
+              },
+              decoration: InputDecoration(
+                labelText: 'Date d\'échéance (optionnel)',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.calendar_today),
+                suffixIcon: _selectedDate != null
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          setState(() {
+                            _selectedDate = null;
+                          });
+                        },
+                      )
+                    : null,
+              ),
+              style: TextStyle(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white
+                    : Colors.black,
+              ),
             ),
             const SizedBox(height: 16),
             // Rappel
-            Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedReminder ?? DateTime.now(),
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 365)),
+            TextField(
+              readOnly: true,
+              controller: TextEditingController(
+                text: _selectedReminder != null
+                    ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                    : '',
+              ),
+              onTap: () async {
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: _selectedReminder ?? DateTime.now(),
+                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                if (date != null) {
+                  final time = await showTimePicker(
+                    context: context,
+                    initialTime: _selectedReminder != null
+                        ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
+                        : TimeOfDay.now(),
+                  );
+                  if (time != null) {
+                    setState(() {
+                      _selectedReminder = DateTime(
+                        date.year,
+                        date.month,
+                        date.day,
+                        time.hour,
+                        time.minute,
                       );
-                      if (date != null) {
-                        final time = await showTimePicker(
-                          context: context,
-                          initialTime: _selectedReminder != null 
-                              ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
-                              : TimeOfDay.now(),
-                        );
-                        if (time != null) {
+                    });
+                  }
+                }
+              },
+              decoration: InputDecoration(
+                labelText: 'Rappel (optionnel)',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.alarm),
+                suffixIcon: _selectedReminder != null
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
                           setState(() {
-                            _selectedReminder = DateTime(
-                              date.year,
-                              date.month,
-                              date.day,
-                              time.hour,
-                              time.minute,
-                            );
+                            _selectedReminder = null;
                           });
-                        }
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade400),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.alarm),
-                          const SizedBox(width: 8),
-                          Text(
-                            _selectedReminder != null
-                                ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
-                                : 'Rappel (optionnel)',
-                            style: TextStyle(
-                              color: _selectedReminder != null 
-                                  ? Colors.black 
-                                  : Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (_selectedReminder != null)
-                  IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      setState(() {
-                        _selectedReminder = null;
-                      });
-                    },
-                  ),
-              ],
+                        },
+                      )
+                    : null,
+              ),
+              style: TextStyle(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white
+                    : Colors.black,
+              ),
             ),
             const SizedBox(height: 16),
             // Priorité
@@ -1645,6 +1819,18 @@ class _EditTodoModalState extends State<EditTodoModal> {
                   });
                 }
               },
+            ),
+            const SizedBox(height: 16),
+            // Temps estimé
+            TextField(
+              controller: _estimatedTimeController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Temps estimé (en minutes, optionnel)',
+                border: OutlineInputBorder(),
+                hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
+                prefixIcon: Icon(Icons.timer),
+              ),
             ),
             const SizedBox(height: 24),
               // Section Sous-tâches
@@ -1685,31 +1871,14 @@ class _EditTodoModalState extends State<EditTodoModal> {
                       return ListTile(
                         leading: const Icon(Icons.subdirectory_arrow_right),
                         title: Text(subTask.title),
-                        subtitle: subTask.description.isNotEmpty ? Text(subTask.description) : null,
-                        trailing: Checkbox(
-                          value: subTask.isCompleted,
-                          onChanged: (_) {
-                            widget.onToggleSubTask(subTask.id);
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
                             setState(() {
-                              final index = _subTasks.indexWhere((t) => t.id == subTask.id);
-                              if (index != -1) {
-                                _subTasks[index] = TodoItem(
-                                  id: subTask.id,
-                                  title: subTask.title,
-                                  description: subTask.description,
-                                  dueDate: subTask.dueDate,
-                                  priority: subTask.priority,
-                                  projectId: subTask.projectId,
-                                  isCompleted: !subTask.isCompleted,
-                                  parentId: subTask.parentId,
-                                  level: subTask.level,
-                                  reminder: subTask.reminder,
-                                );
-                              }
+                              _subTasks.removeAt(index);
                             });
                           },
                         ),
-                        // TODO: ouvrir la modale d'édition de la sous-tâche ici à l'étape suivante
                       );
                     },
                   ),
@@ -1721,6 +1890,32 @@ class _EditTodoModalState extends State<EditTodoModal> {
                 ),
                 const SizedBox(height: 24),
               ],
+            // Temps passé
+            Row(
+              children: [
+                const Icon(Icons.timelapse, size: 16),
+                const SizedBox(width: 4),
+                Text('Temps passé : ${_formatElapsedTime(widget.todo.elapsedSeconds)}', style: const TextStyle(fontSize: 14)),
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 18),
+                  tooltip: 'Réinitialiser le temps',
+                  onPressed: () {
+                    setState(() {
+                      widget.todo.elapsedSeconds = 0;
+                      if (TimerService().isTaskRunning(widget.todo.id)) {
+                        TimerService().pauseTimer();
+                      }
+                    });
+                    // Sauvegarder la tâche réinitialisée
+                    final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
+                    if (homeState != null) {
+                      homeState._saveData();
+                    }
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
             // Boutons
             Row(
               children: [
@@ -1740,19 +1935,39 @@ class _EditTodoModalState extends State<EditTodoModal> {
                           );
                           return;
                         }
-                            final updatedTodo = TodoItem(
-                              id: widget.todo.id,
-                              title: _titleController.text.trim(),
-                              description: _descriptionController.text.trim(),
-                              dueDate: _selectedDate,
-                              priority: _selectedPriority,
-                              projectId: _selectedProject!.id,
-                              isCompleted: widget.todo.isCompleted,
-                          parentId: widget.todo.parentId, // Conserve le parent existant
-                          level: widget.todo.level, // Conserve le niveau existant
-                          reminder: _selectedReminder,
+                        int? estimatedMinutes;
+                        if (_estimatedTimeController.text.trim().isNotEmpty) {
+                          try {
+                            estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+                            if (estimatedMinutes <= 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
+                              );
+                              return;
+                            }
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
                             );
-                            Navigator.pop(context, {'todo': updatedTodo});
+                            return;
+                          }
+                        }
+                        final updatedTodo = TodoItem(
+                          id: widget.todo.id,
+                          title: _titleController.text.trim(),
+                          description: _descriptionController.text.trim(),
+                          dueDate: _selectedDate,
+                          priority: _selectedPriority,
+                          projectId: _selectedProject!.id,
+                          isCompleted: widget.todo.isCompleted,
+                          parentId: widget.todo.parentId,
+                          level: widget.todo.level,
+                          reminder: _selectedReminder,
+                          estimatedMinutes: estimatedMinutes,
+                          elapsedMinutes: widget.todo.elapsedMinutes,
+                          elapsedSeconds: widget.todo.elapsedSeconds,
+                        );
+                        Navigator.pop(context, {'todo': updatedTodo});
                           },
                     child: const Text('Sauvegarder'),
                   ),
@@ -1807,6 +2022,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
+    _estimatedTimeController.dispose();
     _subTaskController.dispose();
     super.dispose();
   }
@@ -1963,6 +2179,9 @@ class TodoItem {
   final int? parentId; // ID de la tâche parente (null pour les tâches racines)
   final int level; // Niveau de profondeur (0 = tâche racine, 1-3 = sous-tâches)
   final DateTime? reminder; // Date et heure du rappel
+  final int? estimatedMinutes; // Temps estimé en minutes
+  int elapsedMinutes; // Temps passé en minutes
+  int elapsedSeconds; // Temps passé en secondes
 
   TodoItem({
     required this.id,
@@ -1975,6 +2194,9 @@ class TodoItem {
     this.parentId,
     this.level = 0,
     this.reminder,
+    this.estimatedMinutes,
+    this.elapsedMinutes = 0,
+    this.elapsedSeconds = 0,
   });
 
   // Méthode pour créer une sous-tâche
@@ -1984,6 +2206,7 @@ class TodoItem {
     DateTime? dueDate,
     Priority priority = Priority.medium,
     bool isCompleted = false,
+    int? estimatedMinutes,
   }) {
     if (level >= 3) {
       throw Exception('Impossible de créer une sous-tâche au-delà du niveau 3');
@@ -1999,6 +2222,7 @@ class TodoItem {
       isCompleted: isCompleted,
       parentId: this.id,
       level: this.level + 1,
+      estimatedMinutes: estimatedMinutes,
     );
   }
 
@@ -2010,6 +2234,33 @@ class TodoItem {
 
   // Méthode pour vérifier si on peut ajouter des sous-tâches
   bool get canHaveSubTasks => level < 3;
+
+  // Méthode pour formater le temps estimé
+  String get estimatedTimeText {
+    if (estimatedMinutes == null) return 'Non défini';
+    final hours = estimatedMinutes! ~/ 60;
+    final minutes = estimatedMinutes! % 60;
+    if (hours > 0) {
+      return '${hours}h${minutes > 0 ? ' ${minutes}min' : ''}';
+    }
+    return '${minutes}min';
+  }
+
+  // Méthode pour formater le temps passé
+  String get elapsedTimeText {
+    final hours = elapsedMinutes ~/ 60;
+    final minutes = elapsedMinutes % 60;
+    if (hours > 0) {
+      return '${hours}h${minutes > 0 ? ' ${minutes}min' : ''}';
+    }
+    return '${minutes}min';
+  }
+
+  // Méthode pour calculer le pourcentage de progression
+  double get progressPercentage {
+    if (estimatedMinutes == null || estimatedMinutes == 0) return 0.0;
+    return (elapsedMinutes / estimatedMinutes!).clamp(0.0, 1.0);
+  }
 
   // Convertir en Map pour la sauvegarde
   Map<String, dynamic> toMap() {
@@ -2024,6 +2275,9 @@ class TodoItem {
       'parentId': parentId,
       'level': level,
       'reminder': reminder?.millisecondsSinceEpoch,
+      'estimatedMinutes': estimatedMinutes,
+      'elapsedMinutes': elapsedMinutes,
+      'elapsedSeconds': elapsedSeconds,
     };
   }
 
@@ -2040,6 +2294,17 @@ class TodoItem {
       parentId: map['parentId'],
       level: map['level'] ?? 0,
       reminder: map['reminder'] != null ? DateTime.fromMillisecondsSinceEpoch(map['reminder']) : null,
+      estimatedMinutes: map['estimatedMinutes'],
+      elapsedMinutes: map['elapsedMinutes'] ?? 0,
+      elapsedSeconds: (map['elapsedSeconds'] ?? ((map['elapsedMinutes'] ?? 0) * 60)) as int,
     );
   }
+}
+
+String _formatElapsedTime(int totalSeconds) {
+  final min = totalSeconds ~/ 60;
+  final sec = totalSeconds % 60;
+  if (min == 0) return '${sec}s';
+  if (sec == 0) return '${min}min';
+  return '${min}min ${sec}s';
 }
