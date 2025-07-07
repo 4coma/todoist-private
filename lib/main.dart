@@ -4,6 +4,7 @@ import 'services/notification_service.dart';
 import 'services/storage_service.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'services/timer_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,6 +73,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   Project? _selectedProject;
   SortType _currentSort = SortType.dateAdded;
   bool _isSidebarOpen = false;
+  bool _showDescriptions = false;
 
   // Set pour suivre les tâches dépliées (affichant leurs sous-tâches)
   final Set<int> _expandedTasks = {};
@@ -83,6 +85,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
     super.initState();
     _timerService.addListener(_onTimerTick);
     _loadData();
+    _loadSettings();
   }
 
   @override
@@ -141,6 +144,30 @@ class _TodoHomePageState extends State<TodoHomePage> {
       debugPrint('✅ Données chargées: ${_projects.length} projets, ${_todos.length} tâches');
     } catch (e) {
       debugPrint('❌ Erreur lors du chargement des données: $e');
+    }
+  }
+
+  // Charger les paramètres utilisateur
+  Future<void> _loadSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _showDescriptions = prefs.getBool('show_descriptions') ?? false;
+      });
+      debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions');
+    } catch (e) {
+      debugPrint('❌ Erreur lors du chargement des paramètres: $e');
+    }
+  }
+
+  // Sauvegarder les paramètres utilisateur
+  Future<void> _saveSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('show_descriptions', _showDescriptions);
+      debugPrint('✅ Paramètres sauvegardés: show_descriptions = $_showDescriptions');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la sauvegarde des paramètres: $e');
     }
   }
 
@@ -506,59 +533,80 @@ class _TodoHomePageState extends State<TodoHomePage> {
               ),
               subtitle: Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 10,
-                  runSpacing: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (subTask.estimatedMinutes != null)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.timer, size: 15),
-                          const SizedBox(width: 2),
-                          Text('Estimé : ${subTask.estimatedTimeText}', style: const TextStyle(fontSize: 12)),
-                        ],
+                    // Description (si activée dans les paramètres)
+                    if (_showDescriptions && subTask.description.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          subTask.description,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: subTask.isCompleted ? Colors.grey : Theme.of(context).hintColor,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ...(TimerService().isTaskRunning(subTask.id)
-                      ? [
+                    // Informations de temps et sous-tâches
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 10,
+                      runSpacing: 2,
+                      children: [
+                        if (subTask.estimatedMinutes != null)
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.play_circle, size: 15, color: Colors.green),
+                              const Icon(Icons.timer, size: 15),
                               const SizedBox(width: 2),
-                              Text(
-                                _formatElapsedTime(subTask.elapsedSeconds + TimerService().elapsedSeconds),
-                                style: const TextStyle(fontSize: 13, color: Colors.green),
-                              ),
+                              Text('Estimé : ${subTask.estimatedTimeText}', style: const TextStyle(fontSize: 12)),
                             ],
-                          )
-                        ]
-                      : subTask.elapsedSeconds > 0
-                        ? [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.timelapse, size: 15),
-                                const SizedBox(width: 2),
-                                Text('Passé : ${_formatElapsedTime(subTask.elapsedSeconds)}', style: const TextStyle(fontSize: 12)),
-                              ],
-                            )
-                          ]
-                        : []),
-                    if (hasNestedSubTasks)
-                      Container(
-                        margin: const EdgeInsets.only(left: 4),
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.purple.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${_getSubTasks(subTask.id).length} sous-tâches',
-                          style: TextStyle(fontSize: 12, color: Colors.purple),
-                        ),
-                      ),
+                          ),
+                        ...(TimerService().isTaskRunning(subTask.id)
+                          ? [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.play_circle, size: 15, color: Colors.green),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    _formatElapsedTime(subTask.elapsedSeconds + TimerService().elapsedSeconds),
+                                    style: const TextStyle(fontSize: 13, color: Colors.green),
+                                  ),
+                                ],
+                              )
+                            ]
+                          : subTask.elapsedSeconds > 0
+                            ? [
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.timelapse, size: 15),
+                                    const SizedBox(width: 2),
+                                    Text('Passé : ${_formatElapsedTime(subTask.elapsedSeconds)}', style: const TextStyle(fontSize: 12)),
+                                  ],
+                                )
+                              ]
+                            : []),
+                        if (hasNestedSubTasks)
+                          Container(
+                            margin: const EdgeInsets.only(left: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${_getSubTasks(subTask.id).length} sous-tâches',
+                              style: TextStyle(fontSize: 12, color: Colors.purple),
+                            ),
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -655,6 +703,20 @@ class _TodoHomePageState extends State<TodoHomePage> {
             const SizedBox(height: 20),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => SettingsScreen(
+        onThemeChanged: widget.onThemeChanged,
+        onSettingsChanged: () {
+          _loadSettings();
+        },
       ),
     );
   }
@@ -783,12 +845,6 @@ class _TodoHomePageState extends State<TodoHomePage> {
       appBar: AppBar(
         title: Text(_selectedProject?.name ?? 'Toutes les tâches'),
         automaticallyImplyLeading: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.palette),
-            onPressed: _showThemeSelector,
-          ),
-        ],
       ),
       drawer: Drawer(
         child: Column(
@@ -854,6 +910,16 @@ class _TodoHomePageState extends State<TodoHomePage> {
               onTap: () {
                 Navigator.pop(context);
                 _addProject();
+              },
+            ),
+            Spacer(),
+            Divider(),
+            ListTile(
+              leading: Icon(Icons.settings),
+              title: Text('Paramètres'),
+              onTap: () {
+                Navigator.pop(context);
+                _showSettings();
               },
             ),
           ],
@@ -973,59 +1039,80 @@ class _TodoHomePageState extends State<TodoHomePage> {
                               ),
                               subtitle: Padding(
                                 padding: const EdgeInsets.only(top: 4),
-                                child: Wrap(
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  spacing: 10,
-                                  runSpacing: 2,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    if (todo.estimatedMinutes != null)
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.timer, size: 15),
-                                          const SizedBox(width: 2),
-                                          Text('Estimé : ${todo.estimatedTimeText}', style: const TextStyle(fontSize: 12)),
-                                        ],
+                                    // Description (si activée dans les paramètres)
+                                    if (_showDescriptions && todo.description.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 4),
+                                        child: Text(
+                                          todo.description,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: todo.isCompleted ? Colors.grey : Theme.of(context).hintColor,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
-                                    ...(TimerService().isTaskRunning(todo.id)
-                                      ? [
+                                    // Informations de temps et sous-tâches
+                                    Wrap(
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      spacing: 10,
+                                      runSpacing: 2,
+                                      children: [
+                                        if (todo.estimatedMinutes != null)
                                           Row(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              const Icon(Icons.play_circle, size: 15, color: Colors.green),
+                                              const Icon(Icons.timer, size: 15),
                                               const SizedBox(width: 2),
-                                              Text(
-                                                _formatElapsedTime(todo.elapsedSeconds + TimerService().elapsedSeconds),
-                                                style: const TextStyle(fontSize: 13, color: Colors.green),
-                                              ),
+                                              Text('Estimé : ${todo.estimatedTimeText}', style: const TextStyle(fontSize: 12)),
                                             ],
-                                          )
-                                        ]
-                                      : todo.elapsedSeconds > 0
-                                        ? [
-                                            Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(Icons.timelapse, size: 15),
-                                                const SizedBox(width: 2),
-                                                Text('Passé : ${_formatElapsedTime(todo.elapsedSeconds)}', style: const TextStyle(fontSize: 12)),
-                                              ],
-                                            )
-                                          ]
-                                        : []),
-                                    if (hasSubTasks)
-                                      Container(
-                                        margin: const EdgeInsets.only(left: 4),
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Colors.purple.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Text(
-                                          '${_getSubTasks(todo.id).length} sous-tâches',
-                                          style: TextStyle(fontSize: 12, color: Colors.purple),
-                                        ),
-                                      ),
+                                          ),
+                                        ...(TimerService().isTaskRunning(todo.id)
+                                          ? [
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(Icons.play_circle, size: 15, color: Colors.green),
+                                                  const SizedBox(width: 2),
+                                                  Text(
+                                                    _formatElapsedTime(todo.elapsedSeconds + TimerService().elapsedSeconds),
+                                                    style: const TextStyle(fontSize: 13, color: Colors.green),
+                                                  ),
+                                                ],
+                                              )
+                                            ]
+                                          : todo.elapsedSeconds > 0
+                                            ? [
+                                                Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    const Icon(Icons.timelapse, size: 15),
+                                                    const SizedBox(width: 2),
+                                                    Text('Passé : ${_formatElapsedTime(todo.elapsedSeconds)}', style: const TextStyle(fontSize: 12)),
+                                                  ],
+                                                )
+                                              ]
+                                            : []),
+                                        if (hasSubTasks)
+                                          Container(
+                                            margin: const EdgeInsets.only(left: 4),
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.purple.withOpacity(0.1),
+                                              borderRadius: BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              '${_getSubTasks(todo.id).length} sous-tâches',
+                                              style: TextStyle(fontSize: 12, color: Colors.purple),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
                                   ],
                                 ),
                               ),
@@ -2307,4 +2394,209 @@ String _formatElapsedTime(int totalSeconds) {
   if (min == 0) return '${sec}s';
   if (sec == 0) return '${min}min';
   return '${min}min ${sec}s';
+}
+
+class SettingsScreen extends StatefulWidget {
+  final Function(ThemeData) onThemeChanged;
+  final Function() onSettingsChanged;
+  
+  const SettingsScreen({super.key, required this.onThemeChanged, required this.onSettingsChanged});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _showDescriptions = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _showDescriptions = prefs.getBool('show_descriptions') ?? false;
+    });
+  }
+
+  Future<void> _saveShowDescriptions(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_descriptions', value);
+    setState(() {
+      _showDescriptions = value;
+    });
+    widget.onSettingsChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(24),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(
+              'Paramètres',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: Theme.of(context).colorScheme.onSurface,
+                letterSpacing: -0.5,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              children: [
+                // Section Thème
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.palette, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Thème',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _buildThemeOption('Bleu', AppThemes.blueTheme, const Color(0xFF2563EB)),
+                          _buildThemeOption('Vert', AppThemes.greenTheme, const Color(0xFF059669)),
+                          _buildThemeOption('Violet', AppThemes.purpleTheme, const Color(0xFF7C3AED)),
+                          _buildThemeOption('Orange', AppThemes.orangeTheme, const Color(0xFFEA580C)),
+                          _buildThemeOption('Gradient', AppThemes.gradientTheme, const Color(0xFF667EEA)),
+                          _buildThemeOption('Sombre', AppThemes.darkTheme, const Color(0xFF1F2937)),
+                          _buildThemeOption('Minimal', AppThemes.minimalTheme, const Color(0xFF6B7280)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                // Section Affichage
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.visibility, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Affichage',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      SwitchListTile(
+                        title: Text('Afficher les descriptions'),
+                        subtitle: Text('Afficher les descriptions des tâches dans la liste principale'),
+                        value: _showDescriptions,
+                        onChanged: _saveShowDescriptions,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThemeOption(String name, ThemeData theme, Color color) {
+    return InkWell(
+      onTap: () {
+        widget.onThemeChanged(theme);
+        Navigator.pop(context);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.1),
+              color.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: color.withOpacity(0.3),
+            width: 1.5,
+          ),
+        ),
+        child: Text(
+          name,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ).animate().scale(
+        duration: 150.ms,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
 }
