@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
 import 'themes.dart';
 import 'services/notification_service.dart';
-import 'services/storage_service.dart';
+import 'services/local_storage_service.dart';
+import 'services/data_migration_service.dart';
+import 'services/todo_service.dart';
+import 'services/project_service.dart';
+import 'services/preferences_service.dart';
+import 'models/todo_item.dart';
+import 'models/project.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'services/timer_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'dart:io';
+import 'dart:convert';
+import 'services/data_export_import_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,7 +26,45 @@ void main() async {
   // Vérifier l'état des permissions
   await NotificationService.checkPermissions();
   
+  // Initialiser le nouveau système de stockage
+  await _initializeStorage();
+  
   runApp(const TodoApp());
+}
+
+// Initialisation du système de stockage avec migration
+Future<void> _initializeStorage() async {
+  try {
+    print('🚀 Initialisation du système de stockage...');
+    
+    // Initialiser le LocalStorageService
+    await LocalStorageService().initialize();
+    
+    // Vérifier si une migration est nécessaire
+    final migrationService = DataMigrationService();
+    if (await migrationService.needsMigration()) {
+      print('🔄 Migration des données détectée...');
+      
+      // Effectuer la migration
+      final result = await migrationService.migrateAllData();
+      
+      if (result.isSuccessful) {
+        print('✅ Migration réussie: $result');
+        // Nettoyer les anciennes données
+        await migrationService.cleanupOldData();
+      } else {
+        print('❌ Migration échouée: $result');
+        // Rollback en cas d'erreur
+        await migrationService.rollback();
+      }
+    } else {
+      print('ℹ️ Aucune migration nécessaire');
+    }
+    
+    print('✅ Système de stockage initialisé avec succès');
+  } catch (e) {
+    print('❌ Erreur lors de l\'initialisation du stockage: $e');
+  }
 }
 
 class TodoApp extends StatefulWidget {
@@ -61,14 +110,7 @@ class TodoHomePage extends StatefulWidget {
 }
 
 class _TodoHomePageState extends State<TodoHomePage> {
-  List<Project> _projects = [
-    Project(
-      id: 1,
-      name: 'Personnel',
-      color: Colors.blue,
-      isDefault: true,
-    ),
-  ];
+  List<Project> _projects = [];
   List<TodoItem> _todos = [];
   Project? _selectedProject;
   SortType _currentSort = SortType.dateAdded;
@@ -79,6 +121,11 @@ class _TodoHomePageState extends State<TodoHomePage> {
   final Set<int> _expandedTasks = {};
 
   final TimerService _timerService = TimerService();
+  final LocalStorageService _storage = LocalStorageService();
+  final TodoService _todoService = TodoService();
+  final ProjectService _projectService = ProjectService();
+  final PreferencesService _preferencesService = PreferencesService();
+  final DataExportImportService _dataExportImportService = DataExportImportService();
 
   @override
   void initState() {
@@ -96,46 +143,45 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   void _onTimerTick() {
     if (_timerService.isRunning && _timerService.currentTaskId != -1) {
-      setState(() {}); // Pour rafraîchir l'affichage du temps en cours
+      setState(() {
+        _todos = _todoService.todos; // Recharger les données pour rafraîchir l'affichage
+      });
     }
   }
 
-  void _handlePlayPause(TodoItem todo) {
+  void _handlePlayPause(TodoItem todo) async {
     if (_timerService.isTaskRunning(todo.id)) {
       final seconds = _timerService.elapsedSeconds;
-      setState(() {
-        final index = _todos.indexWhere((t) => t.id == todo.id);
-        if (index != -1) {
-          _todos[index].elapsedSeconds += seconds;
-        }
-      });
+      
+      // Mettre à jour le temps écoulé via le service spécialisé
+      await _todoService.updateElapsedTime(todo.id, todo.elapsedSeconds + seconds);
+      
       _timerService.pauseTimer();
-      _saveData();
+      
+      // Recharger les données
+      setState(() {
+        _todos = _todoService.todos;
+      });
     } else {
       final alreadyElapsedSeconds = todo.elapsedSeconds;
       _timerService.startTimer(todo.id, alreadyElapsedSeconds: alreadyElapsedSeconds);
     }
-    setState(() {});
   }
 
   // Charger les données sauvegardées
   Future<void> _loadData() async {
     try {
-      // Charger les projets
-      final savedProjects = await StorageService().loadProjects();
-      if (savedProjects.isNotEmpty) {
-        setState(() {
-          _projects = savedProjects;
-          _selectedProject = _projects.first;
-        });
-      } else {
-    _selectedProject = _projects.first;
-      }
-
-      // Charger les tâches
-      final savedTodos = await StorageService().loadTodos();
+      // Charger les projets depuis le service spécialisé
+      final projects = _projectService.projects;
       setState(() {
-        _todos = savedTodos;
+        _projects = projects;
+        _selectedProject = projects.isNotEmpty ? projects.first : null;
+      });
+
+      // Charger les tâches depuis le service spécialisé
+      final todos = _todoService.todos;
+      setState(() {
+        _todos = todos;
       });
 
       // Reprogrammer les notifications pour les tâches avec rappel
@@ -150,9 +196,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Charger les paramètres utilisateur
   Future<void> _loadSettings() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
       setState(() {
-        _showDescriptions = prefs.getBool('show_descriptions') ?? false;
+        _showDescriptions = _preferencesService.showDescriptions;
       });
       debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions');
     } catch (e) {
@@ -163,8 +208,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Sauvegarder les paramètres utilisateur
   Future<void> _saveSettings() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('show_descriptions', _showDescriptions);
+      await _storage.setPreference('show_descriptions', _showDescriptions);
       debugPrint('✅ Paramètres sauvegardés: show_descriptions = $_showDescriptions');
     } catch (e) {
       debugPrint('❌ Erreur lors de la sauvegarde des paramètres: $e');
@@ -174,7 +218,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Reprogrammer les notifications pour toutes les tâches avec rappel
   Future<void> _rescheduleNotifications() async {
     try {
-      for (final todo in _todos) {
+      for (final todo in _todoService.todos) {
         if (todo.reminder != null && todo.reminder!.isAfter(DateTime.now())) {
           await NotificationService.scheduleTaskReminder(
             taskId: todo.id,
@@ -185,7 +229,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
         }
       }
       
-      debugPrint('✅ Rappels reprogrammés pour ${_todos.where((t) => t.reminder != null && t.reminder!.isAfter(DateTime.now())).length} tâches');
+      debugPrint('✅ Rappels reprogrammés pour ${_todoService.todos.where((t) => t.reminder != null && t.reminder!.isAfter(DateTime.now())).length} tâches');
     } catch (e) {
       debugPrint('❌ Erreur lors de la reprogrammation des rappels: $e');
     }
@@ -194,8 +238,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Méthode pour sauvegarder les données
   Future<void> _saveData() async {
     try {
-      await StorageService().saveProjects(_projects);
-      await StorageService().saveTodos(_todos);
+      // Les données sont automatiquement sauvegardées par le LocalStorageService
+      // lors des modifications via les méthodes addTodo, updateTodo, etc.
+      debugPrint('✅ Données sauvegardées automatiquement');
     } catch (e) {
       debugPrint('❌ Erreur lors de la sauvegarde: $e');
     }
@@ -211,32 +256,34 @@ class _TodoHomePageState extends State<TodoHomePage> {
         final newTodo = result['todo'] as TodoItem;
         final subTasks = result['subTasks'] as List<TodoItem>? ?? [];
         
+        // Ajouter la tâche principale via le service spécialisé
+        final addedTodo = await _todoService.addTodo(newTodo);
+        
+        // Ajouter les sous-tâches avec le bon parentId
+        for (final subTask in subTasks) {
+          final updatedSubTask = TodoItem(
+            id: subTask.id,
+            title: subTask.title,
+            description: subTask.description,
+            dueDate: subTask.dueDate,
+            priority: subTask.priority,
+            projectId: subTask.projectId,
+            isCompleted: subTask.isCompleted,
+            parentId: addedTodo.id, // Lier à la tâche parente
+            level: subTask.level,
+            reminder: subTask.reminder,
+            estimatedMinutes: subTask.estimatedMinutes,
+            elapsedMinutes: subTask.elapsedMinutes,
+            elapsedSeconds: subTask.elapsedSeconds,
+          );
+          await _todoService.addTodo(updatedSubTask);
+        }
+        
+        // Recharger les données depuis le service spécialisé
         setState(() {
-          _todos.add(newTodo);
-          
-          // Ajouter les sous-tâches avec le bon parentId
-          for (final subTask in subTasks) {
-            final updatedSubTask = TodoItem(
-              id: subTask.id,
-              title: subTask.title,
-              description: subTask.description,
-              dueDate: subTask.dueDate,
-              priority: subTask.priority,
-              projectId: subTask.projectId,
-              isCompleted: subTask.isCompleted,
-              parentId: newTodo.id, // Lier à la tâche parente
-              level: subTask.level,
-              reminder: subTask.reminder,
-              estimatedMinutes: subTask.estimatedMinutes,
-              elapsedMinutes: subTask.elapsedMinutes,
-              elapsedSeconds: subTask.elapsedSeconds,
-            );
-            _todos.add(updatedSubTask);
-          }
+          _todos = _todoService.todos;
         });
         
-        // Sauvegarder les données
-        await _saveData();
         // Planifier la notification pour la tâche principale
         if (newTodo.reminder != null) {
           await NotificationService.scheduleTaskReminder(
@@ -271,37 +318,44 @@ class _TodoHomePageState extends State<TodoHomePage> {
         todo: todo,
         projects: _projects,
         subTasks: subTasks,
-        onAddSubTask: (subTask) {
+        onAddSubTask: (subTask) async {
+          await _todoService.addTodo(subTask);
           setState(() {
-            _todos.add(subTask);
+            _todos = _todoService.todos;
           });
         },
-        onToggleSubTask: (id) {
-          setState(() {
-            final index = _todos.indexWhere((t) => t.id == id);
-            if (index != -1) {
-              _todos[index].isCompleted = !_todos[index].isCompleted;
-            }
-          });
-        },
-        onDeleteTodo: (id) {
-          _deleteTodo(id);
+        onToggleSubTask: (id) async {
+          final todoToUpdate = _todoService.getTodo(id);
+          if (todoToUpdate != null) {
+            await _todoService.updateTodo(id, {
+              'isCompleted': !todoToUpdate.isCompleted,
+            });
+            setState(() {
+              _todos = _todoService.todos;
+            });
+          }
         },
       ),
     ).then((result) async {
       if (result != null && result['todo'] != null) {
-        setState(() {
-          final index = _todos.indexWhere((t) => t.id == todo.id);
-          if (index != -1) {
-            _todos[index] = result['todo'] as TodoItem;
-          }
+        final updatedTodo = result['todo'] as TodoItem;
+        
+        // Mettre à jour via le service spécialisé
+        await _todoService.updateTodo(todo.id, {
+          'title': updatedTodo.title,
+          'description': updatedTodo.description,
+          'dueDate': updatedTodo.dueDate,
+          'priority': updatedTodo.priority,
+          'projectId': updatedTodo.projectId,
+          'reminder': updatedTodo.reminder,
+          'estimatedMinutes': updatedTodo.estimatedMinutes,
         });
         
-        // Sauvegarder les données
-        await _saveData();
-        final updatedTodo = result['todo'] as TodoItem;
-        // Note: Les notifications sont maintenant gérées avec des IDs séparés
-        // Pas besoin d'annuler explicitement car scheduleTaskReminder le fait automatiquement
+        // Recharger les données
+        setState(() {
+          _todos = _todoService.todos;
+        });
+        
         // Planifier la nouvelle notification si besoin
         if (updatedTodo.reminder != null) {
           await NotificationService.scheduleTaskReminder(
@@ -321,12 +375,13 @@ class _TodoHomePageState extends State<TodoHomePage> {
       builder: (context) => AddProjectDialog(),
     ).then((newProject) async {
       if (newProject != null) {
-        setState(() {
-          _projects.add(newProject);
-        });
+        // Ajouter le projet via le service spécialisé
+        await _projectService.addProject(newProject);
         
-        // Sauvegarder les données
-        await _saveData();
+        // Recharger les données
+        setState(() {
+          _projects = _projectService.projects;
+        });
       }
     });
   }
@@ -338,7 +393,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
         title: const Text('Supprimer le projet'),
         content: Text(
           'Êtes-vous sûr de vouloir supprimer le projet "${project.name}" ? '
-          'Toutes les tâches associées seront également supprimées.',
+          'Toutes les tâches associées seront déplacées vers le projet par défaut.',
         ),
         actions: [
           TextButton(
@@ -347,16 +402,20 @@ class _TodoHomePageState extends State<TodoHomePage> {
           ),
           TextButton(
             onPressed: () async {
-              setState(() {
-                _projects.remove(project);
-                _todos.removeWhere((todo) => todo.projectId == project.id);
-                if (_selectedProject?.id == project.id) {
-                  _selectedProject = _projects.isNotEmpty ? _projects.first : null;
-                }
-              });
+              // Supprimer le projet via le service spécialisé
+              final success = await _projectService.deleteProject(project.id);
               
-              // Sauvegarder les données
-              await _saveData();
+              if (success) {
+                // Recharger les données
+                setState(() {
+                  _projects = _projectService.projects;
+                  _todos = _todoService.todos;
+                  if (_selectedProject?.id == project.id) {
+                    _selectedProject = _projects.isNotEmpty ? _projects.first : null;
+                  }
+                });
+              }
+              
               Navigator.pop(context);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -410,18 +469,20 @@ class _TodoHomePageState extends State<TodoHomePage> {
   }
 
   void _toggleTodo(int id) async {
-    setState(() {
-      final todo = _todos.firstWhere((todo) => todo.id == id);
-      todo.isCompleted = !todo.isCompleted;
-    });
-    
-    // Sauvegarder les données
-    await _saveData();
+    final todo = _storage.getTodo(id);
+    if (todo != null) {
+      await _storage.updateTodo(id, {
+        'isCompleted': !todo.isCompleted,
+      });
+      
+      // Recharger les données
+      setState(() {
+        _todos = _todoService.todos;
+      });
+    }
   }
 
   void _deleteTodo(int id) async {
-    debugPrint('🗑️ Suppression de la tâche $id');
-    
     // Annuler les notifications de la tâche et de ses sous-tâches
     await NotificationService.cancelTaskNotification(id);
     
@@ -431,49 +492,37 @@ class _TodoHomePageState extends State<TodoHomePage> {
       await NotificationService.cancelTaskNotification(subTask.id);
     }
     
-    setState(() {
-      // Supprimer la tâche et toutes ses sous-tâches
-      final beforeCount = _todos.length;
-      _todos.removeWhere((todo) => todo.id == id || todo.parentId == id);
-      final afterCount = _todos.length;
-      debugPrint('🗑️ Tâches supprimées: $beforeCount -> $afterCount (${beforeCount - afterCount} supprimées)');
-    });
+    // Supprimer la tâche principale et toutes ses sous-tâches via le service spécialisé
+    await _todoService.deleteTodoWithSubTasks(id);
     
-    // Sauvegarder les données
-    await _saveData();
-    debugPrint('🗑️ Suppression terminée pour la tâche $id');
+    // Recharger les données
+    setState(() {
+      _todos = _todoService.todos;
+    });
   }
 
   // Méthodes utilitaires pour les sous-tâches
   List<TodoItem> _getSubTasks(int parentId) {
-    return _todos.where((todo) => todo.parentId == parentId).toList();
+    return _todoService.getSubTasks(parentId);
   }
 
   List<TodoItem> _getAllSubTasks(int parentId) {
-    List<TodoItem> allSubTasks = [];
-    List<int> toProcess = [parentId];
-    
-    while (toProcess.isNotEmpty) {
-      int currentId = toProcess.removeAt(0);
-      List<TodoItem> directSubTasks = _todos.where((todo) => todo.parentId == currentId).toList();
-      allSubTasks.addAll(directSubTasks);
-      toProcess.addAll(directSubTasks.map((todo) => todo.id));
-    }
-    
-    return allSubTasks;
+    return _todoService.getAllSubTasks(parentId);
   }
 
   bool _hasSubTasks(int parentId) {
-    return _todos.any((todo) => todo.parentId == parentId);
+    return _todoService.hasSubTasks(parentId);
   }
 
-  void _addSubTask(TodoItem parentTask, TodoItem subTask) {
+  void _addSubTask(TodoItem parentTask, TodoItem subTask) async {
     if (!parentTask.canHaveSubTasks) {
       throw Exception('Impossible d\'ajouter une sous-tâche au-delà du niveau 3');
     }
     
+    await _todoService.addTodo(subTask);
+    
     setState(() {
-      _todos.add(subTask);
+      _todos = _todoService.todos;
     });
   }
   
@@ -1301,330 +1350,330 @@ class _AddTodoModalState extends State<AddTodoModal> {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SingleChildScrollView(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Nouvelle Tâche',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // Projet
-            DropdownButtonFormField<Project>(
-              value: _selectedProject,
-              decoration: const InputDecoration(
-                labelText: 'Projet',
-                border: OutlineInputBorder(),
-              ),
-              items: widget.projects.map((project) {
-                return DropdownMenuItem(
-                  value: project,
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: project.color,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(project.name),
-                    ],
-                  ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedProject = value;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            // Titre
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                labelText: 'Titre de la tâche *',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Description
-            TextField(
-              controller: _descriptionController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Description (optionnel)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Date d'échéance
-            TextField(
-              readOnly: true,
-              controller: TextEditingController(
-                text: _selectedDate != null
-                    ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                    : '',
-              ),
-              onTap: () async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: _selectedDate ?? DateTime.now(),
-                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                );
-                if (date != null) {
-                  setState(() {
-                    _selectedDate = date;
-                  });
-                }
-              },
-              decoration: InputDecoration(
-                labelText: 'Date d\'échéance (optionnel)',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.calendar_today),
-                suffixIcon: _selectedDate != null
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          setState(() {
-                            _selectedDate = null;
-                          });
-                        },
-                      )
-                    : null,
-              ),
-              style: TextStyle(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white
-                    : Colors.black,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Rappel
-            TextField(
-              readOnly: true,
-              controller: TextEditingController(
-                text: _selectedReminder != null
-                    ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
-                    : '',
-              ),
-              onTap: () async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: _selectedReminder ?? DateTime.now(),
-                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                );
-                if (date != null) {
-                  final time = await showTimePicker(
-                    context: context,
-                    initialTime: _selectedReminder != null
-                        ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
-                        : TimeOfDay.now(),
-                  );
-                  if (time != null) {
-                    setState(() {
-                      _selectedReminder = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time.hour,
-                        time.minute,
-                      );
-                    });
-                  }
-                }
-              },
-              decoration: InputDecoration(
-                labelText: 'Rappel (optionnel)',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.alarm),
-                suffixIcon: _selectedReminder != null
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          setState(() {
-                            _selectedReminder = null;
-                          });
-                        },
-                      )
-                    : null,
-              ),
-              style: TextStyle(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white
-                    : Colors.black,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Priorité
-            DropdownButtonFormField<Priority>(
-              value: _selectedPriority,
-              decoration: const InputDecoration(
-                labelText: 'Priorité',
-                border: OutlineInputBorder(),
-              ),
-              items: Priority.values.map((priority) {
-                return DropdownMenuItem(
-                  value: priority,
-                    child: Text(getPriorityText(priority)),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _selectedPriority = value;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 16),
-            // Temps estimé
-            TextField(
-              controller: _estimatedTimeController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Temps estimé (en minutes, optionnel)',
-                border: OutlineInputBorder(),
-                hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
-                prefixIcon: Icon(Icons.timer),
-              ),
-            ),
-            const SizedBox(height: 24),
-              // Section Sous-tâches
-              const Text(
-                'Sous-tâches (optionnel)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 8),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _subTaskController,
-                      decoration: const InputDecoration(
-                        labelText: 'Ajouter une sous-tâche',
-                        border: OutlineInputBorder(),
-                      ),
+                  const Text(
+                    'Nouvelle Tâche',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _addSubTask,
-                    child: const Icon(Icons.add),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              if (_subTasks.isEmpty)
-                const Text('Aucune sous-tâche ajoutée.'),
-              if (_subTasks.isNotEmpty)
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _subTasks.length,
-                  itemBuilder: (context, index) {
-                    final subTask = _subTasks[index];
-                    return ListTile(
-                      leading: const Icon(Icons.subdirectory_arrow_right),
-                      title: Text(subTask.title),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () {
-                          setState(() {
-                            _subTasks.removeAt(index);
-                          });
-                        },
-                      ),
+              const SizedBox(height: 16),
+              // Projet
+              DropdownButtonFormField<Project>(
+                value: _selectedProject,
+                decoration: const InputDecoration(
+                  labelText: 'Projet',
+                  border: OutlineInputBorder(),
+                ),
+                items: widget.projects.map((project) {
+                  return DropdownMenuItem(
+                    value: project,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: project.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(project.name),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedProject = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 16),
+              // Titre
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Titre de la tâche *',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Description
+              TextField(
+                controller: _descriptionController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optionnel)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Date d'échéance
+              TextField(
+                readOnly: true,
+                controller: TextEditingController(
+                  text: _selectedDate != null
+                      ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                      : '',
+                ),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate ?? DateTime.now(),
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    setState(() {
+                      _selectedDate = date;
+                    });
+                  }
+                },
+                decoration: InputDecoration(
+                  labelText: 'Date d\'échéance (optionnel)',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.calendar_today),
+                  suffixIcon: _selectedDate != null
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _selectedDate = null;
+                            });
+                          },
+                        )
+                      : null,
+                ),
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : Colors.black,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Rappel
+              TextField(
+                readOnly: true,
+                controller: TextEditingController(
+                  text: _selectedReminder != null
+                      ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                      : '',
+                ),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedReminder ?? DateTime.now(),
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: _selectedReminder != null
+                          ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
+                          : TimeOfDay.now(),
                     );
-                  },
+                    if (time != null) {
+                      setState(() {
+                        _selectedReminder = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
+                      });
+                    }
+                  }
+                },
+                decoration: InputDecoration(
+                  labelText: 'Rappel (optionnel)',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.alarm),
+                  suffixIcon: _selectedReminder != null
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _selectedReminder = null;
+                            });
+                          },
+                        )
+                      : null,
                 ),
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : Colors.black,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Priorité
+              DropdownButtonFormField<Priority>(
+                value: _selectedPriority,
+                decoration: const InputDecoration(
+                  labelText: 'Priorité',
+                  border: OutlineInputBorder(),
+                ),
+                items: Priority.values.map((priority) {
+                  return DropdownMenuItem(
+                    value: priority,
+                      child: Text(getPriorityText(priority)),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _selectedPriority = value;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              // Temps estimé
+              TextField(
+                controller: _estimatedTimeController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Temps estimé (en minutes, optionnel)',
+                  border: OutlineInputBorder(),
+                  hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
+                  prefixIcon: Icon(Icons.timer),
+                ),
+              ),
               const SizedBox(height: 24),
-            // Boutons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Annuler'),
-                  ),
+                // Section Sous-tâches
+                const Text(
+                  'Sous-tâches (optionnel)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                      onPressed: () {
-                        if (_titleController.text.trim().isEmpty || _selectedProject == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
-                          );
-                          return;
-                        }
-                        
-                        // Parser le temps estimé
-                        int? estimatedMinutes;
-                        if (_estimatedTimeController.text.trim().isNotEmpty) {
-                          try {
-                            estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
-                            if (estimatedMinutes <= 0) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
-                              );
-                              return;
-                            }
-                          } catch (e) {
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _subTaskController,
+                        decoration: const InputDecoration(
+                          labelText: 'Ajouter une sous-tâche',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _addSubTask,
+                      child: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (_subTasks.isEmpty)
+                  const Text('Aucune sous-tâche ajoutée.'),
+                if (_subTasks.isNotEmpty)
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _subTasks.length,
+                    itemBuilder: (context, index) {
+                      final subTask = _subTasks[index];
+                      return ListTile(
+                        leading: const Icon(Icons.subdirectory_arrow_right),
+                        title: Text(subTask.title),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            setState(() {
+                              _subTasks.removeAt(index);
+                            });
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                const SizedBox(height: 24),
+              // Boutons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Annuler'),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ElevatedButton(
+                        onPressed: () {
+                          if (_titleController.text.trim().isEmpty || _selectedProject == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
+                              const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
                             );
                             return;
                           }
-                        }
-                        
-                            final newTodo = TodoItem(
-                              id: DateTime.now().millisecondsSinceEpoch,
-                              title: _titleController.text.trim(),
-                              description: _descriptionController.text.trim(),
-                              dueDate: _selectedDate,
-                              priority: _selectedPriority,
-                              projectId: _selectedProject!.id,
-                              isCompleted: false,
-                              parentId: null, // Tâche racine
-                              level: 0,
-                              reminder: _selectedReminder,
-                              estimatedMinutes: estimatedMinutes,
-                              elapsedMinutes: 0,
-                              elapsedSeconds: 0,
-                            );
-                        Navigator.pop(context, {
-                          'todo': newTodo,
-                          'subTasks': _subTasks,
-                        });
-                          },
-                    child: const Text('Ajouter'),
+                          
+                          // Parser le temps estimé
+                          int? estimatedMinutes;
+                          if (_estimatedTimeController.text.trim().isNotEmpty) {
+                            try {
+                              estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+                              if (estimatedMinutes <= 0) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
+                                );
+                                return;
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
+                              );
+                              return;
+                            }
+                          }
+                          
+                              final newTodo = TodoItem(
+                                id: DateTime.now().millisecondsSinceEpoch,
+                                title: _titleController.text.trim(),
+                                description: _descriptionController.text.trim(),
+                                dueDate: _selectedDate,
+                                priority: _selectedPriority,
+                                projectId: _selectedProject!.id,
+                                isCompleted: false,
+                                parentId: null, // Tâche racine
+                                level: 0,
+                                reminder: _selectedReminder,
+                                estimatedMinutes: estimatedMinutes,
+                                elapsedMinutes: 0,
+                                elapsedSeconds: 0,
+                              );
+                          Navigator.pop(context, {
+                            'todo': newTodo,
+                            'subTasks': _subTasks,
+                          });
+                            },
+                      child: const Text('Ajouter'),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
+            ],
             ),
-          ],
-          ),
         ),
       ),
     );
@@ -1645,7 +1694,6 @@ class EditTodoModal extends StatefulWidget {
   final List<TodoItem> subTasks;
   final Function(TodoItem) onAddSubTask;
   final Function(int) onToggleSubTask;
-  final Function(int) onDeleteTodo; // Callback pour supprimer une tâche
   
   const EditTodoModal({
     super.key, 
@@ -1654,7 +1702,6 @@ class EditTodoModal extends StatefulWidget {
     required this.subTasks,
     required this.onAddSubTask,
     required this.onToggleSubTask,
-    required this.onDeleteTodo,
   });
 
   @override
@@ -1718,7 +1765,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SingleChildScrollView(
-      child: Container(
+        child: Container(
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2088,8 +2135,10 @@ class _EditTodoModalState extends State<EditTodoModal> {
                         ),
                         TextButton(
                           onPressed: () {
-                            debugPrint('🗑️ Bouton suppression cliqué pour la tâche ${widget.todo.id}');
-                            widget.onDeleteTodo(widget.todo.id);
+                            final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
+                            if (homeState != null) {
+                              homeState._deleteTodo(widget.todo.id);
+                            }
                             Navigator.pop(context); // Fermer la boîte de dialogue
                             Navigator.pop(context); // Fermer la modale d'édition
                           },
@@ -2108,7 +2157,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                 label: const Text('Supprimer cette tâche'),
               ),
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -2217,8 +2266,6 @@ class _AddProjectDialogState extends State<AddProjectDialog> {
   }
 }
 
-enum Priority { low, medium, high }
-
 String getPriorityText(Priority priority) {
   switch (priority) {
     case Priority.low:
@@ -2227,173 +2274,6 @@ String getPriorityText(Priority priority) {
       return 'Moyenne';
     case Priority.high:
       return 'Haute';
-  }
-}
-
-class Project {
-  final int id;
-  final String name;
-  final Color color;
-  final bool isDefault;
-
-  Project({
-    required this.id,
-    required this.name,
-    required this.color,
-    required this.isDefault,
-  });
-
-  // Convertir en Map pour la sauvegarde
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'name': name,
-      'color': color.value,
-      'isDefault': isDefault,
-    };
-  }
-
-  // Créer depuis une Map
-  factory Project.fromMap(Map<String, dynamic> map) {
-    return Project(
-      id: map['id'],
-      name: map['name'],
-      color: Color(map['color']),
-      isDefault: map['isDefault'],
-    );
-  }
-}
-
-class TodoItem {
-  final int id;
-  final String title;
-  final String description;
-  final DateTime? dueDate;
-  final Priority priority;
-  final int projectId;
-  bool isCompleted;
-  final int? parentId; // ID de la tâche parente (null pour les tâches racines)
-  final int level; // Niveau de profondeur (0 = tâche racine, 1-3 = sous-tâches)
-  final DateTime? reminder; // Date et heure du rappel
-  final int? estimatedMinutes; // Temps estimé en minutes
-  int elapsedMinutes; // Temps passé en minutes
-  int elapsedSeconds; // Temps passé en secondes
-
-  TodoItem({
-    required this.id,
-    required this.title,
-    required this.description,
-    this.dueDate,
-    required this.priority,
-    required this.projectId,
-    required this.isCompleted,
-    this.parentId,
-    this.level = 0,
-    this.reminder,
-    this.estimatedMinutes,
-    this.elapsedMinutes = 0,
-    this.elapsedSeconds = 0,
-  });
-
-  // Méthode pour créer une sous-tâche
-  TodoItem createSubTask({
-    required String title,
-    required String description,
-    DateTime? dueDate,
-    Priority priority = Priority.medium,
-    bool isCompleted = false,
-    int? estimatedMinutes,
-  }) {
-    if (level >= 3) {
-      throw Exception('Impossible de créer une sous-tâche au-delà du niveau 3');
-    }
-    
-    return TodoItem(
-      id: DateTime.now().millisecondsSinceEpoch,
-      title: title,
-      description: description,
-      dueDate: dueDate,
-      priority: priority,
-      projectId: this.projectId, // Hérite du projet parent
-      isCompleted: isCompleted,
-      parentId: this.id,
-      level: this.level + 1,
-      estimatedMinutes: estimatedMinutes,
-    );
-  }
-
-  // Méthode pour vérifier si c'est une tâche racine
-  bool get isRootTask => parentId == null;
-
-  // Méthode pour vérifier si c'est une sous-tâche
-  bool get isSubTask => parentId != null;
-
-  // Méthode pour vérifier si on peut ajouter des sous-tâches
-  bool get canHaveSubTasks => level < 3;
-
-  // Méthode pour formater le temps estimé
-  String get estimatedTimeText {
-    if (estimatedMinutes == null) return 'Non défini';
-    final hours = estimatedMinutes! ~/ 60;
-    final minutes = estimatedMinutes! % 60;
-    if (hours > 0) {
-      return '${hours}h${minutes > 0 ? ' ${minutes}min' : ''}';
-    }
-    return '${minutes}min';
-  }
-
-  // Méthode pour formater le temps passé
-  String get elapsedTimeText {
-    final hours = elapsedMinutes ~/ 60;
-    final minutes = elapsedMinutes % 60;
-    if (hours > 0) {
-      return '${hours}h${minutes > 0 ? ' ${minutes}min' : ''}';
-    }
-    return '${minutes}min';
-  }
-
-  // Méthode pour calculer le pourcentage de progression
-  double get progressPercentage {
-    if (estimatedMinutes == null || estimatedMinutes == 0) return 0.0;
-    return (elapsedMinutes / estimatedMinutes!).clamp(0.0, 1.0);
-  }
-
-  // Convertir en Map pour la sauvegarde
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'title': title,
-      'description': description,
-      'dueDate': dueDate?.millisecondsSinceEpoch,
-      'priority': priority.index,
-      'projectId': projectId,
-      'isCompleted': isCompleted,
-      'parentId': parentId,
-      'level': level,
-      'reminder': reminder?.millisecondsSinceEpoch,
-      'estimatedMinutes': estimatedMinutes,
-      'elapsedMinutes': elapsedMinutes,
-      'elapsedSeconds': elapsedSeconds,
-    };
-  }
-
-  // Créer depuis une Map
-  factory TodoItem.fromMap(Map<String, dynamic> map) {
-    return TodoItem(
-      id: map['id'],
-      title: map['title'],
-      description: map['description'],
-      dueDate: map['dueDate'] != null ? DateTime.fromMillisecondsSinceEpoch(map['dueDate']) : null,
-      priority: Priority.values[map['priority']],
-      projectId: map['projectId'],
-      isCompleted: map['isCompleted'],
-      parentId: map['parentId'],
-      level: map['level'] ?? 0,
-      reminder: map['reminder'] != null ? DateTime.fromMillisecondsSinceEpoch(map['reminder']) : null,
-      estimatedMinutes: map['estimatedMinutes'],
-      elapsedMinutes: map['elapsedMinutes'] ?? 0,
-      elapsedSeconds: (map['elapsedSeconds'] ?? ((map['elapsedMinutes'] ?? 0) * 60)) as int,
-    );
   }
 }
 
@@ -2417,6 +2297,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _showDescriptions = false;
+  final PreferencesService _preferencesService = PreferencesService();
+  final DataExportImportService _dataExportImportService = DataExportImportService();
 
   @override
   void initState() {
@@ -2425,19 +2307,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _showDescriptions = prefs.getBool('show_descriptions') ?? false;
+      _showDescriptions = _preferencesService.showDescriptions;
     });
   }
 
   Future<void> _saveShowDescriptions(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('show_descriptions', value);
+    await _preferencesService.setShowDescriptions(value);
     setState(() {
       _showDescriptions = value;
     });
     widget.onSettingsChanged();
+  }
+
+  Future<void> _exportData() async {
+    try {
+      final data = _dataExportImportService.exportAllData();
+      final jsonString = const JsonEncoder.withIndent('  ').convert(data);
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/todo_backup_${DateTime.now().millisecondsSinceEpoch}.json');
+      await file.writeAsString(jsonString);
+      await Share.shareXFiles([XFile(file.path)], text: 'Sauvegarde Todo App');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Export réussi ! Fichier prêt à être partagé.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur lors de l\'export : $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importData() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['json']);
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        final jsonString = await file.readAsString();
+        final data = jsonDecode(jsonString) as Map<String, dynamic>;
+        await _dataExportImportService.importAllData(data);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Import réussi !')),
+          );
+        }
+        widget.onSettingsChanged();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur lors de l\'import : $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -2559,6 +2485,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _showDescriptions,
                         onChanged: _saveShowDescriptions,
                         contentPadding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                // Section Sauvegarde
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.backup, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Sauvegarde & Restauration',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.file_upload),
+                        label: const Text('Exporter mes données'),
+                        onPressed: _exportData,
+                        style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(40)),
+                      ),
+                      const SizedBox(height: 8),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.file_download),
+                        label: const Text('Importer des données'),
+                        onPressed: _importData,
+                        style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(40)),
                       ),
                     ],
                   ),
