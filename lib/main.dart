@@ -261,7 +261,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
     });
   }
 
-  void _editTodo(TodoItem todo) {
+  void _openEditModal(TodoItem todo) {
+    debugPrint('🟢 [_openEditModal] Ouverture du modal pour: ${todo.title} (niveau ${todo.level})');
     final subTasks = _getSubTasks(todo.id);
     
     showModalBottomSheet(
@@ -287,6 +288,10 @@ class _TodoHomePageState extends State<TodoHomePage> {
         onDeleteTodo: (id) {
           _deleteTodo(id);
         },
+        onEditSubTask: (subTask) {
+          // Fonction récursive pour ouvrir le modal d'édition de n'importe quelle tâche
+          _openEditModal(subTask);
+        },
       ),
     ).then((result) async {
       if (result != null && result['todo'] != null) {
@@ -300,8 +305,6 @@ class _TodoHomePageState extends State<TodoHomePage> {
         // Sauvegarder les données
         await _saveData();
         final updatedTodo = result['todo'] as TodoItem;
-        // Note: Les notifications sont maintenant gérées avec des IDs séparés
-        // Pas besoin d'annuler explicitement car scheduleTaskReminder le fait automatiquement
         // Planifier la nouvelle notification si besoin
         if (updatedTodo.reminder != null) {
           await NotificationService.scheduleTaskReminder(
@@ -313,6 +316,10 @@ class _TodoHomePageState extends State<TodoHomePage> {
         }
       }
     });
+  }
+
+  void _editTodo(TodoItem todo) {
+    _openEditModal(todo);
   }
 
   void _addProject() {
@@ -1646,6 +1653,7 @@ class EditTodoModal extends StatefulWidget {
   final Function(TodoItem) onAddSubTask;
   final Function(int) onToggleSubTask;
   final Function(int) onDeleteTodo; // Callback pour supprimer une tâche
+  final Function(TodoItem)? onEditSubTask; // Callback pour éditer une sous-tâche
   
   const EditTodoModal({
     super.key, 
@@ -1655,6 +1663,7 @@ class EditTodoModal extends StatefulWidget {
     required this.onAddSubTask,
     required this.onToggleSubTask,
     required this.onDeleteTodo,
+    this.onEditSubTask,
   });
 
   @override
@@ -1966,16 +1975,98 @@ class _EditTodoModalState extends State<EditTodoModal> {
                     itemCount: _subTasks.length,
                     itemBuilder: (context, index) {
                       final subTask = _subTasks[index];
-                      return ListTile(
-                        leading: const Icon(Icons.subdirectory_arrow_right),
-                        title: Text(subTask.title),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () {
-                            setState(() {
-                              _subTasks.removeAt(index);
-                            });
+                      return Card(
+                        margin: const EdgeInsets.symmetric(vertical: 2),
+                        child: InkWell(
+                          onTap: () {
+                            debugPrint('🟢 [EditTodoModal] Clic sur sous-tâche: ${subTask.title} (ID: ${subTask.id})');
+                            // Utiliser le callback si disponible, sinon essayer de trouver le homeState
+                            if (widget.onEditSubTask != null) {
+                              debugPrint('🟢 [EditTodoModal] Utilisation du callback onEditSubTask');
+                              widget.onEditSubTask!(subTask);
+                            } else {
+                              debugPrint('🟢 [EditTodoModal] Tentative de récupération du homeState');
+                              final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
+                              debugPrint('🟢 [EditTodoModal] homeState trouvé: ${homeState != null}');
+                              if (homeState != null) {
+                                final subTasks = homeState._getSubTasks(subTask.id);
+                                debugPrint('🟢 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
+                                showModalBottomSheet(
+                                  context: context,
+                                  isScrollControlled: true,
+                                  builder: (context) => EditTodoModal(
+                                    todo: subTask,
+                                    projects: homeState._projects,
+                                    subTasks: subTasks,
+                                    onAddSubTask: (newSubTask) {
+                                      debugPrint('🟢 [EditTodoModal] Ajout de sous-tâche: ${newSubTask.title}');
+                                      homeState.setState(() {
+                                        homeState._todos.add(newSubTask);
+                                      });
+                                    },
+                                    onToggleSubTask: (id) {
+                                      debugPrint('🟢 [EditTodoModal] Toggle sous-tâche: $id');
+                                      homeState.setState(() {
+                                        final index = homeState._todos.indexWhere((t) => t.id == id);
+                                        if (index != -1) {
+                                          homeState._todos[index].isCompleted = !homeState._todos[index].isCompleted;
+                                        }
+                                      });
+                                    },
+                                    onDeleteTodo: (id) {
+                                      debugPrint('🟢 [EditTodoModal] Suppression de tâche: $id');
+                                      homeState._deleteTodo(id);
+                                    },
+                                    onEditSubTask: (nestedSubTask) {
+                                      // Appeler la même fonction récursive
+                                      homeState._openEditModal(nestedSubTask);
+                                    },
+                                  ),
+                                );
+                                debugPrint('🟢 [EditTodoModal] Modal ouvert pour sous-tâche');
+                              } else {
+                                debugPrint('🔴 [EditTodoModal] ERREUR: homeState non trouvé!');
+                              }
+                            }
                           },
+                          child: ListTile(
+                            leading: const Icon(Icons.subdirectory_arrow_right),
+                            title: Text(
+                              subTask.title,
+                              style: TextStyle(
+                                decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
+                                color: subTask.isCompleted ? Colors.grey : null,
+                              ),
+                            ),
+                            subtitle: subTask.description.isNotEmpty
+                                ? Text(
+                                    subTask.description,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: subTask.isCompleted ? Colors.grey : Theme.of(context).hintColor,
+                                    ),
+                                  )
+                                : null,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (subTask.dueDate != null)
+                                  Icon(Icons.calendar_today, size: 16, color: Theme.of(context).hintColor),
+                                IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () {
+                                    debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title}');
+                                    setState(() {
+                                      _subTasks.removeAt(index);
+                                    });
+                                  },
+                                  tooltip: 'Supprimer cette sous-tâche',
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       );
                     },
