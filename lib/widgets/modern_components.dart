@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:glassmorphism/glassmorphism.dart';
 
@@ -82,7 +81,7 @@ class GlassmorphicCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassmorphicContainer(
       width: double.infinity,
-      height: null,
+      height: double.infinity,
       borderRadius: 20,
       blur: blur,
       alignment: Alignment.center,

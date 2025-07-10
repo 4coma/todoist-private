@@ -478,4 +478,32 @@ class LocalStorageService {
       'pending_todos': _todos.where((t) => !t.isCompleted).length,
     };
   }
+
+  // Vider toutes les tâches en mémoire
+  void clearAllTodos() {
+    print('🗑️ LocalStorageService: Vider toutes les tâches en mémoire');
+    _todos.clear();
+  }
+
+  // Vider tous les projets en mémoire
+  void clearAllProjects() {
+    print('🗑️ LocalStorageService: Vider tous les projets en mémoire');
+    _projects.clear();
+  }
+
+  // Mettre à jour toutes les tâches
+  Future<void> updateAllTodos(List<TodoItem> todos) async {
+    print('🔄 LocalStorageService: Mise à jour de toutes les tâches (${todos.length})');
+    _todos = List<TodoItem>.from(todos);
+    await _saveTodos();
+    print('✅ LocalStorageService: Toutes les tâches mises à jour');
+  }
+
+  // Mettre à jour tous les projets
+  Future<void> updateAllProjects(List<Project> projects) async {
+    print('🔄 LocalStorageService: Mise à jour de tous les projets (${projects.length})');
+    _projects = List<Project>.from(projects);
+    await _saveProjects();
+    print('✅ LocalStorageService: Tous les projets mis à jour');
+  }
 } 

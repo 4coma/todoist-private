@@ -1,6 +1,7 @@
 import 'todo_service.dart';
 import 'project_service.dart';
 import 'preferences_service.dart';
+import 'local_storage_service.dart';
 import '../models/todo_item.dart';
 import '../models/project.dart';
 
@@ -146,6 +147,20 @@ class DataExportImportService {
       print('   - Projets importés: ${_projectService.projects.length}');
       print('   - Tâches importées: ${_todoService.todos.length}');
       print('   - Préférences importées: ${_preferencesService.getAllPreferences().length}');
+      
+      // Forcer la synchronisation avec LocalStorageService
+      print('🔄 DataExportImportService: Synchronisation avec LocalStorageService...');
+      final localStorageService = LocalStorageService();
+      await localStorageService.reloadData();
+      print('✅ DataExportImportService: Synchronisation terminée');
+      
+      // Vérifier que les données sont bien synchronisées
+      final stats = localStorageService.getDataStats();
+      print('📊 Vérification finale - LocalStorageService:');
+      print('   - Projets: ${stats['projects']}');
+      print('   - Tâches: ${stats['todos']}');
+      print('   - Tâches complétées: ${stats['completed_todos']}');
+      print('   - Tâches en attente: ${stats['pending_todos']}');
     } catch (e) {
       print('❌ DataExportImportService: Erreur lors de l\'import: $e');
       rethrow;
@@ -228,36 +243,13 @@ class DataExportImportService {
       print('🔄 SUPPRESSION DE TOUTES LES DONNÉES');
       print('🔄 ==========================================');
       
-      // Supprimer toutes les tâches
-      final todos = _todoService.todos;
-      print('📝 DataExportImportService.clearAllData(): ${todos.length} tâches à supprimer');
+      // Forcer la suppression directe du stockage local
+      final localStorageService = LocalStorageService();
       
-      for (final todo in todos) {
-        try {
-          final result = await _todoService.deleteTodo(todo.id);
-          print('   ${result ? "✅" : "❌"} Tâche supprimée: "${todo.title}" (ID: ${todo.id})');
-        } catch (e) {
-          print('   ❌ Erreur lors de la suppression de la tâche "${todo.title}": $e');
-        }
-      }
-
-      // Supprimer tous les projets (sauf le projet par défaut)
-      final projects = _projectService.projects;
-      print('📝 DataExportImportService.clearAllData(): ${projects.length} projets à vérifier');
+      // Supprimer toutes les données du stockage persistant
+      await localStorageService.clearAllData();
+      print('✅ Toutes les données supprimées du stockage persistant');
       
-      for (final project in projects) {
-        if (!project.isDefault) {
-          try {
-            final result = await _projectService.deleteProject(project.id);
-            print('   ${result ? "✅" : "❌"} Projet supprimé: "${project.name}" (ID: ${project.id})');
-          } catch (e) {
-            print('   ❌ Erreur lors de la suppression du projet "${project.name}": $e');
-          }
-        } else {
-          print('   ⚠️ Projet par défaut conservé: "${project.name}" (ID: ${project.id})');
-        }
-      }
-
       // Supprimer toutes les préférences (sauf celles essentielles)
       final prefs = _preferencesService.getAllPreferences();
       print('📝 DataExportImportService.clearAllData(): ${prefs.length} préférences à vérifier');
@@ -276,15 +268,9 @@ class DataExportImportService {
         }
       }
 
-      // Vérifier le résultat final
-      final remainingTodos = _todoService.todos;
-      final remainingProjects = _projectService.projects;
-      final remainingPrefs = _preferencesService.getAllPreferences();
-      
-      print('📊 DataExportImportService.clearAllData(): Résultat final:');
-      print('   - Tâches restantes: ${remainingTodos.length}');
-      print('   - Projets restants: ${remainingProjects.length}');
-      print('   - Préférences restantes: ${remainingPrefs.length}');
+      // Vider les listes en mémoire
+      _todoService.clearAllTodos();
+      _projectService.clearAllProjects();
       
       print('✅ DataExportImportService.clearAllData(): Suppression terminée');
       print('✅ ==========================================');

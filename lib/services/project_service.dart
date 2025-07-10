@@ -277,4 +277,10 @@ class ProjectService {
       'overallProgress': totalTodos > 0 ? (totalCompleted / totalTodos).clamp(0.0, 1.0) : 0.0,
     };
   }
+
+  // Vider tous les projets en mémoire
+  void clearAllProjects() {
+    debugPrint('🗑️ [ProjectService] clearAllProjects: vider tous les projets en mémoire');
+    _storage.clearAllProjects();
+  }
 } 

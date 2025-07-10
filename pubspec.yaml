@@ -60,6 +60,17 @@ dependencies:
   
   # Composants de design moderne
   flutter_slidable: ^3.0.1
+  
+  # === DÉPENDANCES POUR GESTION DES FICHIERS ===
+  
+  # Sélection et sauvegarde de fichiers
+  file_picker: ^6.1.1
+  
+  # Gestion des permissions et accès aux fichiers
+  permission_handler: ^11.3.1
+  
+  # Gestion des chemins de fichiers
+  path_provider: ^2.1.2
 
 dev_dependencies:
   flutter_test:

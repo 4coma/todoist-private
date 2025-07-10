@@ -268,4 +268,10 @@ class TodoService {
            todo.level >= 0 && 
            todo.level <= 3;
   }
+
+  // Vider toutes les tâches en mémoire
+  void clearAllTodos() {
+    debugPrint('🗑️ [TodoService] clearAllTodos: vider toutes les tâches en mémoire');
+    _storage.clearAllTodos();
+  }
 } 

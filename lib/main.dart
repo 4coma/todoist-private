@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'themes.dart';
 import 'services/notification_service.dart';
-import 'services/storage_service.dart';
+import 'services/local_storage_service.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'services/timer_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/data_export_import_service.dart';
+import 'services/file_service.dart';
+import 'models/project.dart';
+import 'models/todo_item.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,10 +32,72 @@ class TodoApp extends StatefulWidget {
 class _TodoAppState extends State<TodoApp> {
   ThemeData _currentTheme = AppThemes.blueTheme;
 
-  void _changeTheme(ThemeData theme) {
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedTheme();
+  }
+
+  Future<void> _loadSavedTheme() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedTheme = prefs.getString('selected_theme') ?? 'blue';
+      
+      setState(() {
+        _currentTheme = _getThemeFromName(savedTheme);
+      });
+      debugPrint('✅ Thème chargé: $savedTheme');
+    } catch (e) {
+      debugPrint('❌ Erreur lors du chargement du thème: $e');
+    }
+  }
+
+  ThemeData _getThemeFromName(String themeName) {
+    switch (themeName) {
+      case 'blue':
+        return AppThemes.blueTheme;
+      case 'green':
+        return AppThemes.greenTheme;
+      case 'purple':
+        return AppThemes.purpleTheme;
+      case 'orange':
+        return AppThemes.orangeTheme;
+      case 'gradient':
+        return AppThemes.gradientTheme;
+      case 'dark':
+        return AppThemes.darkTheme;
+      case 'minimal':
+        return AppThemes.minimalTheme;
+      default:
+        return AppThemes.blueTheme;
+    }
+  }
+
+  String _getThemeName(ThemeData theme) {
+    if (theme == AppThemes.blueTheme) return 'blue';
+    if (theme == AppThemes.greenTheme) return 'green';
+    if (theme == AppThemes.purpleTheme) return 'purple';
+    if (theme == AppThemes.orangeTheme) return 'orange';
+    if (theme == AppThemes.gradientTheme) return 'gradient';
+    if (theme == AppThemes.darkTheme) return 'dark';
+    if (theme == AppThemes.minimalTheme) return 'minimal';
+    return 'blue';
+  }
+
+  void _changeTheme(ThemeData theme) async {
     setState(() {
       _currentTheme = theme;
     });
+    
+    // Sauvegarder le thème sélectionné
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final themeName = _getThemeName(theme);
+      await prefs.setString('selected_theme', themeName);
+      debugPrint('✅ Thème sauvegardé: $themeName');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la sauvegarde du thème: $e');
+    }
   }
 
   @override
@@ -121,29 +187,30 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Charger les données sauvegardées
   Future<void> _loadData() async {
     try {
-      // Charger les projets
-      final savedProjects = await StorageService().loadProjects();
-      if (savedProjects.isNotEmpty) {
-        setState(() {
-          _projects = savedProjects;
-          _selectedProject = _projects.first;
-        });
-      } else {
-    _selectedProject = _projects.first;
-      }
-
-      // Charger les tâches
-      final savedTodos = await StorageService().loadTodos();
+      debugPrint('🔄 _loadData(): Début du chargement des données...');
+      final localStorageService = LocalStorageService();
+      
+      // Charger les projets (créer une copie modifiable)
       setState(() {
-        _todos = savedTodos;
+        _projects = List<Project>.from(localStorageService.projects);
+        if (_projects.isNotEmpty) {
+          _selectedProject = _projects.first;
+        }
       });
+      debugPrint('✅ _loadData(): ${_projects.length} projets chargés');
+
+      // Charger les tâches (créer une copie modifiable)
+      setState(() {
+        _todos = List<TodoItem>.from(localStorageService.todos);
+      });
+      debugPrint('✅ _loadData(): ${_todos.length} tâches chargées');
 
       // Reprogrammer les notifications pour les tâches avec rappel
       await _rescheduleNotifications();
       
-      debugPrint('✅ Données chargées: ${_projects.length} projets, ${_todos.length} tâches');
+      debugPrint('✅ _loadData(): Données chargées avec succès - ${_projects.length} projets, ${_todos.length} tâches');
     } catch (e) {
-      debugPrint('❌ Erreur lors du chargement des données: $e');
+      debugPrint('❌ _loadData(): Erreur lors du chargement des données: $e');
     }
   }
 
@@ -194,8 +261,10 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Méthode pour sauvegarder les données
   Future<void> _saveData() async {
     try {
-      await StorageService().saveProjects(_projects);
-      await StorageService().saveTodos(_todos);
+      final localStorageService = LocalStorageService();
+      await localStorageService.updateAllProjects(_projects);
+      await localStorageService.updateAllTodos(_todos);
+      debugPrint('✅ Données sauvegardées: ${_projects.length} projets, ${_todos.length} tâches');
     } catch (e) {
       debugPrint('❌ Erreur lors de la sauvegarde: $e');
     }
@@ -732,7 +801,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
         onThemeChanged: widget.onThemeChanged,
         onSettingsChanged: () {
           _loadSettings();
+          _loadData();
         },
+        onDataReload: _loadData,
       ),
     );
   }
@@ -1308,329 +1379,329 @@ class _AddTodoModalState extends State<AddTodoModal> {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SingleChildScrollView(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Nouvelle Tâche',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // Projet
-            DropdownButtonFormField<Project>(
-              value: _selectedProject,
-              decoration: const InputDecoration(
-                labelText: 'Projet',
-                border: OutlineInputBorder(),
-              ),
-              items: widget.projects.map((project) {
-                return DropdownMenuItem(
-                  value: project,
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: project.color,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(project.name),
-                    ],
-                  ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedProject = value;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            // Titre
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                labelText: 'Titre de la tâche *',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Description
-            TextField(
-              controller: _descriptionController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Description (optionnel)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Date d'échéance
-            TextField(
-              readOnly: true,
-              controller: TextEditingController(
-                text: _selectedDate != null
-                    ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                    : '',
-              ),
-              onTap: () async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: _selectedDate ?? DateTime.now(),
-                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                );
-                if (date != null) {
-                  setState(() {
-                    _selectedDate = date;
-                  });
-                }
-              },
-              decoration: InputDecoration(
-                labelText: 'Date d\'échéance (optionnel)',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.calendar_today),
-                suffixIcon: _selectedDate != null
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          setState(() {
-                            _selectedDate = null;
-                          });
-                        },
-                      )
-                    : null,
-              ),
-              style: TextStyle(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white
-                    : Colors.black,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Rappel
-            TextField(
-              readOnly: true,
-              controller: TextEditingController(
-                text: _selectedReminder != null
-                    ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
-                    : '',
-              ),
-              onTap: () async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: _selectedReminder ?? DateTime.now(),
-                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                );
-                if (date != null) {
-                  final time = await showTimePicker(
-                    context: context,
-                    initialTime: _selectedReminder != null
-                        ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
-                        : TimeOfDay.now(),
-                  );
-                  if (time != null) {
-                    setState(() {
-                      _selectedReminder = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time.hour,
-                        time.minute,
-                      );
-                    });
-                  }
-                }
-              },
-              decoration: InputDecoration(
-                labelText: 'Rappel (optionnel)',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.alarm),
-                suffixIcon: _selectedReminder != null
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          setState(() {
-                            _selectedReminder = null;
-                          });
-                        },
-                      )
-                    : null,
-              ),
-              style: TextStyle(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white
-                    : Colors.black,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Priorité
-            DropdownButtonFormField<Priority>(
-              value: _selectedPriority,
-              decoration: const InputDecoration(
-                labelText: 'Priorité',
-                border: OutlineInputBorder(),
-              ),
-              items: Priority.values.map((priority) {
-                return DropdownMenuItem(
-                  value: priority,
-                    child: Text(getPriorityText(priority)),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _selectedPriority = value;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 16),
-            // Temps estimé
-            TextField(
-              controller: _estimatedTimeController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Temps estimé (en minutes, optionnel)',
-                border: OutlineInputBorder(),
-                hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
-                prefixIcon: Icon(Icons.timer),
-              ),
-            ),
-            const SizedBox(height: 24),
-              // Section Sous-tâches
-              const Text(
-                'Sous-tâches (optionnel)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 8),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _subTaskController,
-                      decoration: const InputDecoration(
-                        labelText: 'Ajouter une sous-tâche',
-                        border: OutlineInputBorder(),
-                      ),
+                  const Text(
+                    'Nouvelle Tâche',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _addSubTask,
-                    child: const Icon(Icons.add),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              if (_subTasks.isEmpty)
-                const Text('Aucune sous-tâche ajoutée.'),
-              if (_subTasks.isNotEmpty)
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _subTasks.length,
-                  itemBuilder: (context, index) {
-                    final subTask = _subTasks[index];
-                    return ListTile(
-                      leading: const Icon(Icons.subdirectory_arrow_right),
-                      title: Text(subTask.title),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () {
-                          setState(() {
-                            _subTasks.removeAt(index);
-                          });
-                        },
-                      ),
+              const SizedBox(height: 16),
+              // Projet
+              DropdownButtonFormField<Project>(
+                value: _selectedProject,
+                decoration: const InputDecoration(
+                  labelText: 'Projet',
+                  border: OutlineInputBorder(),
+                ),
+                items: widget.projects.map((project) {
+                  return DropdownMenuItem(
+                    value: project,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: project.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(project.name),
+                      ],
+                    ),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedProject = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 16),
+              // Titre
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Titre de la tâche *',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Description
+              TextField(
+                controller: _descriptionController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optionnel)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Date d'échéance
+              TextField(
+                readOnly: true,
+                controller: TextEditingController(
+                  text: _selectedDate != null
+                      ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                      : '',
+                ),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate ?? DateTime.now(),
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    setState(() {
+                      _selectedDate = date;
+                    });
+                  }
+                },
+                decoration: InputDecoration(
+                  labelText: 'Date d\'échéance (optionnel)',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.calendar_today),
+                  suffixIcon: _selectedDate != null
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _selectedDate = null;
+                            });
+                          },
+                        )
+                      : null,
+                ),
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : Colors.black,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Rappel
+              TextField(
+                readOnly: true,
+                controller: TextEditingController(
+                  text: _selectedReminder != null
+                      ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                      : '',
+                ),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedReminder ?? DateTime.now(),
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: _selectedReminder != null
+                          ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
+                          : TimeOfDay.now(),
                     );
-                  },
+                    if (time != null) {
+                      setState(() {
+                        _selectedReminder = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
+                      });
+                    }
+                  }
+                },
+                decoration: InputDecoration(
+                  labelText: 'Rappel (optionnel)',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.alarm),
+                  suffixIcon: _selectedReminder != null
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _selectedReminder = null;
+                            });
+                          },
+                        )
+                      : null,
                 ),
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : Colors.black,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Priorité
+              DropdownButtonFormField<Priority>(
+                value: _selectedPriority,
+                decoration: const InputDecoration(
+                  labelText: 'Priorité',
+                  border: OutlineInputBorder(),
+                ),
+                items: Priority.values.map((priority) {
+                  return DropdownMenuItem(
+                    value: priority,
+                      child: Text(getPriorityText(priority)),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _selectedPriority = value;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              // Temps estimé
+              TextField(
+                controller: _estimatedTimeController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Temps estimé (en minutes, optionnel)',
+                  border: OutlineInputBorder(),
+                  hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
+                  prefixIcon: Icon(Icons.timer),
+                ),
+              ),
               const SizedBox(height: 24),
-            // Boutons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Annuler'),
-                  ),
+                // Section Sous-tâches
+                const Text(
+                  'Sous-tâches (optionnel)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                      onPressed: () {
-                        if (_titleController.text.trim().isEmpty || _selectedProject == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
-                          );
-                          return;
-                        }
-                        
-                        // Parser le temps estimé
-                        int? estimatedMinutes;
-                        if (_estimatedTimeController.text.trim().isNotEmpty) {
-                          try {
-                            estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
-                            if (estimatedMinutes <= 0) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
-                              );
-                              return;
-                            }
-                          } catch (e) {
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _subTaskController,
+                        decoration: const InputDecoration(
+                          labelText: 'Ajouter une sous-tâche',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _addSubTask,
+                      child: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (_subTasks.isEmpty)
+                  const Text('Aucune sous-tâche ajoutée.'),
+                if (_subTasks.isNotEmpty)
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _subTasks.length,
+                    itemBuilder: (context, index) {
+                      final subTask = _subTasks[index];
+                      return ListTile(
+                        leading: const Icon(Icons.subdirectory_arrow_right),
+                        title: Text(subTask.title),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            setState(() {
+                              _subTasks.removeAt(index);
+                            });
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                const SizedBox(height: 24),
+              // Boutons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Annuler'),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ElevatedButton(
+                        onPressed: () {
+                          if (_titleController.text.trim().isEmpty || _selectedProject == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
+                              const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
                             );
                             return;
                           }
-                        }
-                        
-                            final newTodo = TodoItem(
-                              id: DateTime.now().millisecondsSinceEpoch,
-                              title: _titleController.text.trim(),
-                              description: _descriptionController.text.trim(),
-                              dueDate: _selectedDate,
-                              priority: _selectedPriority,
-                              projectId: _selectedProject!.id,
-                              isCompleted: false,
-                              parentId: null, // Tâche racine
-                              level: 0,
-                              reminder: _selectedReminder,
-                              estimatedMinutes: estimatedMinutes,
-                              elapsedMinutes: 0,
-                              elapsedSeconds: 0,
-                            );
-                        Navigator.pop(context, {
-                          'todo': newTodo,
-                          'subTasks': _subTasks,
-                        });
-                          },
-                    child: const Text('Ajouter'),
+                          
+                          // Parser le temps estimé
+                          int? estimatedMinutes;
+                          if (_estimatedTimeController.text.trim().isNotEmpty) {
+                            try {
+                              estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+                              if (estimatedMinutes <= 0) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
+                                );
+                                return;
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
+                              );
+                              return;
+                            }
+                          }
+                          
+                              final newTodo = TodoItem(
+                                id: DateTime.now().millisecondsSinceEpoch,
+                                title: _titleController.text.trim(),
+                                description: _descriptionController.text.trim(),
+                                dueDate: _selectedDate,
+                                priority: _selectedPriority,
+                                projectId: _selectedProject!.id,
+                                isCompleted: false,
+                                parentId: null, // Tâche racine
+                                level: 0,
+                                reminder: _selectedReminder,
+                                estimatedMinutes: estimatedMinutes,
+                                elapsedMinutes: 0,
+                                elapsedSeconds: 0,
+                              );
+                          Navigator.pop(context, {
+                            'todo': newTodo,
+                            'subTasks': _subTasks,
+                          });
+                            },
+                      child: const Text('Ajouter'),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -1727,478 +1798,478 @@ class _EditTodoModalState extends State<EditTodoModal> {
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
       child: SingleChildScrollView(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Modifier la Tâche',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            
-            // Projet
-            DropdownButtonFormField<Project>(
-              value: _selectedProject,
-              decoration: const InputDecoration(
-                labelText: 'Projet',
-                border: OutlineInputBorder(),
-              ),
-              items: widget.projects.map((project) {
-                return DropdownMenuItem(
-                  value: project,
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: project.color,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(project.name),
-                    ],
-                  ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedProject = value;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            
-            // Titre
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                labelText: 'Titre de la tâche *',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            // Description
-            TextField(
-              controller: _descriptionController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Description (optionnel)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            // Date d'échéance
-            TextField(
-              readOnly: true,
-              controller: TextEditingController(
-                text: _selectedDate != null
-                    ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                    : '',
-              ),
-              onTap: () async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: _selectedDate ?? DateTime.now(),
-                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                );
-                if (date != null) {
-                  setState(() {
-                    _selectedDate = date;
-                  });
-                }
-              },
-              decoration: InputDecoration(
-                labelText: 'Date d\'échéance (optionnel)',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.calendar_today),
-                suffixIcon: _selectedDate != null
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          setState(() {
-                            _selectedDate = null;
-                          });
-                        },
-                      )
-                    : null,
-              ),
-              style: TextStyle(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white
-                    : Colors.black,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Rappel
-            TextField(
-              readOnly: true,
-              controller: TextEditingController(
-                text: _selectedReminder != null
-                    ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
-                    : '',
-              ),
-              onTap: () async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: _selectedReminder ?? DateTime.now(),
-                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                );
-                if (date != null) {
-                  final time = await showTimePicker(
-                    context: context,
-                    initialTime: _selectedReminder != null
-                        ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
-                        : TimeOfDay.now(),
-                  );
-                  if (time != null) {
-                    setState(() {
-                      _selectedReminder = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time.hour,
-                        time.minute,
-                      );
-                    });
-                  }
-                }
-              },
-              decoration: InputDecoration(
-                labelText: 'Rappel (optionnel)',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.alarm),
-                suffixIcon: _selectedReminder != null
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          setState(() {
-                            _selectedReminder = null;
-                          });
-                        },
-                      )
-                    : null,
-              ),
-              style: TextStyle(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white
-                    : Colors.black,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Priorité
-            DropdownButtonFormField<Priority>(
-              value: _selectedPriority,
-              decoration: const InputDecoration(
-                labelText: 'Priorité',
-                border: OutlineInputBorder(),
-              ),
-              items: Priority.values.map((priority) {
-                return DropdownMenuItem(
-                  value: priority,
-                    child: Text(getPriorityText(priority)),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _selectedPriority = value;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 16),
-            // Temps estimé
-            TextField(
-              controller: _estimatedTimeController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Temps estimé (en minutes, optionnel)',
-                border: OutlineInputBorder(),
-                hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
-                prefixIcon: Icon(Icons.timer),
-              ),
-            ),
-            const SizedBox(height: 24),
-              // Section Sous-tâches
-              if (widget.todo.canHaveSubTasks) ...[
-                const Text(
-                  'Sous-tâches',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _subTaskController,
-                        decoration: const InputDecoration(
-                          labelText: 'Ajouter une sous-tâche',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Modifier la Tâche',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _addSubTask,
-                      child: const Icon(Icons.add),
-                    ),
-                  ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              
+              // Projet
+              DropdownButtonFormField<Project>(
+                value: _selectedProject,
+                decoration: const InputDecoration(
+                  labelText: 'Projet',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(height: 8),
-                if (_subTasks.isEmpty)
-                  const Text('Aucune sous-tâche.'),
-                if (_subTasks.isNotEmpty)
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _subTasks.length,
-                    itemBuilder: (context, index) {
-                      final subTask = _subTasks[index];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 2),
-                        child: InkWell(
-                          onTap: () {
-                            debugPrint('🟢 [EditTodoModal] Clic sur sous-tâche: ${subTask.title} (ID: ${subTask.id})');
-                            // Utiliser le callback si disponible, sinon essayer de trouver le homeState
-                            if (widget.onEditSubTask != null) {
-                              debugPrint('🟢 [EditTodoModal] Utilisation du callback onEditSubTask');
-                              widget.onEditSubTask!(subTask);
-                            } else {
-                              debugPrint('🟢 [EditTodoModal] Tentative de récupération du homeState');
-                              final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
-                              debugPrint('🟢 [EditTodoModal] homeState trouvé: ${homeState != null}');
-                              if (homeState != null) {
-                                final subTasks = homeState._getSubTasks(subTask.id);
-                                debugPrint('🟢 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
-                                showModalBottomSheet(
-                                  context: context,
-                                  isScrollControlled: true,
-                                  builder: (context) => EditTodoModal(
-                                    todo: subTask,
-                                    projects: homeState._projects,
-                                    subTasks: subTasks,
-                                    onAddSubTask: (newSubTask) {
-                                      debugPrint('🟢 [EditTodoModal] Ajout de sous-tâche: ${newSubTask.title}');
-                                      homeState.setState(() {
-                                        homeState._todos.add(newSubTask);
-                                      });
-                                    },
-                                    onToggleSubTask: (id) {
-                                      debugPrint('🟢 [EditTodoModal] Toggle sous-tâche: $id');
-                                      homeState.setState(() {
-                                        final index = homeState._todos.indexWhere((t) => t.id == id);
-                                        if (index != -1) {
-                                          homeState._todos[index].isCompleted = !homeState._todos[index].isCompleted;
-                                        }
-                                      });
-                                    },
-                                    onDeleteTodo: (id) {
-                                      debugPrint('🟢 [EditTodoModal] Suppression de tâche: $id');
-                                      homeState._deleteTodo(id);
-                                    },
-                                    onEditSubTask: (nestedSubTask) {
-                                      // Appeler la même fonction récursive
-                                      homeState._openEditModal(nestedSubTask);
-                                    },
-                                  ),
-                                );
-                                debugPrint('🟢 [EditTodoModal] Modal ouvert pour sous-tâche');
-                              } else {
-                                debugPrint('🔴 [EditTodoModal] ERREUR: homeState non trouvé!');
-                              }
-                            }
-                          },
-                          child: ListTile(
-                            leading: const Icon(Icons.subdirectory_arrow_right),
-                            title: Text(
-                              subTask.title,
-                              style: TextStyle(
-                                decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
-                                color: subTask.isCompleted ? Colors.grey : null,
-                              ),
-                            ),
-                            subtitle: subTask.description.isNotEmpty
-                                ? Text(
-                                    subTask.description,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: subTask.isCompleted ? Colors.grey : Theme.of(context).hintColor,
-                                    ),
-                                  )
-                                : null,
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (subTask.dueDate != null)
-                                  Icon(Icons.calendar_today, size: 16, color: Theme.of(context).hintColor),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () {
-                                    debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title}');
-                                    setState(() {
-                                      _subTasks.removeAt(index);
-                                    });
-                                  },
-                                  tooltip: 'Supprimer cette sous-tâche',
-                                ),
-                              ],
-                            ),
+                items: widget.projects.map((project) {
+                  return DropdownMenuItem(
+                    value: project,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: project.color,
+                            shape: BoxShape.circle,
                           ),
                         ),
-                      );
-                    },
-                  ),
-                const SizedBox(height: 24),
-              ] else ...[
-                const Text(
-                  'Niveau maximum de sous-tâches atteint.',
-                  style: TextStyle(color: Colors.red),
-                ),
-                const SizedBox(height: 24),
-              ],
-            // Temps passé
-            Row(
-              children: [
-                const Icon(Icons.timelapse, size: 16),
-                const SizedBox(width: 4),
-                Text('Temps passé : ${_formatElapsedTime(widget.todo.elapsedSeconds)}', style: const TextStyle(fontSize: 14)),
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 18),
-                  tooltip: 'Réinitialiser le temps',
-                  onPressed: () {
-                    setState(() {
-                      widget.todo.elapsedSeconds = 0;
-                      if (TimerService().isTaskRunning(widget.todo.id)) {
-                        TimerService().pauseTimer();
-                      }
-                    });
-                    // Sauvegarder la tâche réinitialisée
-                    final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
-                    if (homeState != null) {
-                      homeState._saveData();
-                    }
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // Boutons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Annuler'),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                      onPressed: () {
-                        if (_titleController.text.trim().isEmpty || _selectedProject == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
-                          );
-                          return;
-                        }
-                        int? estimatedMinutes;
-                        if (_estimatedTimeController.text.trim().isNotEmpty) {
-                          try {
-                            estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
-                            if (estimatedMinutes <= 0) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
-                              );
-                              return;
-                            }
-                          } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
-                            );
-                            return;
-                          }
-                        }
-                        final updatedTodo = TodoItem(
-                          id: widget.todo.id,
-                          title: _titleController.text.trim(),
-                          description: _descriptionController.text.trim(),
-                          dueDate: _selectedDate,
-                          priority: _selectedPriority,
-                          projectId: _selectedProject!.id,
-                          isCompleted: widget.todo.isCompleted,
-                          parentId: widget.todo.parentId,
-                          level: widget.todo.level,
-                          reminder: _selectedReminder,
-                          estimatedMinutes: estimatedMinutes,
-                          elapsedMinutes: widget.todo.elapsedMinutes,
-                          elapsedSeconds: widget.todo.elapsedSeconds,
-                        );
-                        Navigator.pop(context, {'todo': updatedTodo});
-                          },
-                    child: const Text('Sauvegarder'),
-                  ),
-                ),
-              ],
-              ),
-              const SizedBox(height: 24),
-              // Bouton de suppression
-              OutlinedButton.icon(
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Supprimer la tâche'),
-                      content: const Text('Êtes-vous sûr de vouloir supprimer cette tâche et toutes ses sous-tâches ?'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Annuler'),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            debugPrint('🗑️ Bouton suppression cliqué pour la tâche ${widget.todo.id}');
-                            widget.onDeleteTodo(widget.todo.id);
-                            Navigator.pop(context); // Fermer la boîte de dialogue
-                            Navigator.pop(context); // Fermer la modale d'édition
-                          },
-                          style: TextButton.styleFrom(foregroundColor: Colors.red),
-                          child: const Text('Supprimer'),
-                        ),
+                        const SizedBox(width: 8),
+                        Text(project.name),
                       ],
                     ),
                   );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedProject = value;
+                  });
                 },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red,
-                  side: const BorderSide(color: Colors.red),
-                ),
-                icon: const Icon(Icons.delete),
-                label: const Text('Supprimer cette tâche'),
               ),
-            ],
+              const SizedBox(height: 16),
+              
+              // Titre
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Titre de la tâche *',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              // Description
+              TextField(
+                controller: _descriptionController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optionnel)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              // Date d'échéance
+              TextField(
+                readOnly: true,
+                controller: TextEditingController(
+                  text: _selectedDate != null
+                      ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+                      : '',
+                ),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate ?? DateTime.now(),
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    setState(() {
+                      _selectedDate = date;
+                    });
+                  }
+                },
+                decoration: InputDecoration(
+                  labelText: 'Date d\'échéance (optionnel)',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.calendar_today),
+                  suffixIcon: _selectedDate != null
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _selectedDate = null;
+                            });
+                          },
+                        )
+                      : null,
+                ),
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : Colors.black,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Rappel
+              TextField(
+                readOnly: true,
+                controller: TextEditingController(
+                  text: _selectedReminder != null
+                      ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                      : '',
+                ),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedReminder ?? DateTime.now(),
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (date != null) {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: _selectedReminder != null
+                          ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
+                          : TimeOfDay.now(),
+                    );
+                    if (time != null) {
+                      setState(() {
+                        _selectedReminder = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
+                      });
+                    }
+                  }
+                },
+                decoration: InputDecoration(
+                  labelText: 'Rappel (optionnel)',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.alarm),
+                  suffixIcon: _selectedReminder != null
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _selectedReminder = null;
+                            });
+                          },
+                        )
+                      : null,
+                ),
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : Colors.black,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Priorité
+              DropdownButtonFormField<Priority>(
+                value: _selectedPriority,
+                decoration: const InputDecoration(
+                  labelText: 'Priorité',
+                  border: OutlineInputBorder(),
+                ),
+                items: Priority.values.map((priority) {
+                  return DropdownMenuItem(
+                    value: priority,
+                      child: Text(getPriorityText(priority)),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _selectedPriority = value;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              // Temps estimé
+              TextField(
+                controller: _estimatedTimeController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Temps estimé (en minutes, optionnel)',
+                  border: OutlineInputBorder(),
+                  hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
+                  prefixIcon: Icon(Icons.timer),
+                ),
+              ),
+              const SizedBox(height: 24),
+                // Section Sous-tâches
+                if (widget.todo.canHaveSubTasks) ...[
+                  const Text(
+                    'Sous-tâches',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _subTaskController,
+                          decoration: const InputDecoration(
+                            labelText: 'Ajouter une sous-tâche',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: _addSubTask,
+                        child: const Icon(Icons.add),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_subTasks.isEmpty)
+                    const Text('Aucune sous-tâche.'),
+                  if (_subTasks.isNotEmpty)
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _subTasks.length,
+                      itemBuilder: (context, index) {
+                        final subTask = _subTasks[index];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 2),
+                          child: InkWell(
+                            onTap: () {
+                              debugPrint('🟢 [EditTodoModal] Clic sur sous-tâche: ${subTask.title} (ID: ${subTask.id})');
+                              // Utiliser le callback si disponible, sinon essayer de trouver le homeState
+                              if (widget.onEditSubTask != null) {
+                                debugPrint('🟢 [EditTodoModal] Utilisation du callback onEditSubTask');
+                                widget.onEditSubTask!(subTask);
+                              } else {
+                                debugPrint('🟢 [EditTodoModal] Tentative de récupération du homeState');
+                                final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
+                                debugPrint('🟢 [EditTodoModal] homeState trouvé: ${homeState != null}');
+                                if (homeState != null) {
+                                  final subTasks = homeState._getSubTasks(subTask.id);
+                                  debugPrint('🟢 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
+                                  showModalBottomSheet(
+                                    context: context,
+                                    isScrollControlled: true,
+                                    builder: (context) => EditTodoModal(
+                                      todo: subTask,
+                                      projects: homeState._projects,
+                                      subTasks: subTasks,
+                                      onAddSubTask: (newSubTask) {
+                                        debugPrint('🟢 [EditTodoModal] Ajout de sous-tâche: ${newSubTask.title}');
+                                        homeState.setState(() {
+                                          homeState._todos.add(newSubTask);
+                                        });
+                                      },
+                                      onToggleSubTask: (id) {
+                                        debugPrint('🟢 [EditTodoModal] Toggle sous-tâche: $id');
+                                        homeState.setState(() {
+                                          final index = homeState._todos.indexWhere((t) => t.id == id);
+                                          if (index != -1) {
+                                            homeState._todos[index].isCompleted = !homeState._todos[index].isCompleted;
+                                          }
+                                        });
+                                      },
+                                      onDeleteTodo: (id) {
+                                        debugPrint('🟢 [EditTodoModal] Suppression de tâche: $id');
+                                        homeState._deleteTodo(id);
+                                      },
+                                      onEditSubTask: (nestedSubTask) {
+                                        // Appeler la même fonction récursive
+                                        homeState._openEditModal(nestedSubTask);
+                                      },
+                                    ),
+                                  );
+                                  debugPrint('🟢 [EditTodoModal] Modal ouvert pour sous-tâche');
+                                } else {
+                                  debugPrint('🔴 [EditTodoModal] ERREUR: homeState non trouvé!');
+                                }
+                              }
+                            },
+                            child: ListTile(
+                              leading: const Icon(Icons.subdirectory_arrow_right),
+                              title: Text(
+                                subTask.title,
+                                style: TextStyle(
+                                  decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
+                                  color: subTask.isCompleted ? Colors.grey : null,
+                                ),
+                              ),
+                              subtitle: subTask.description.isNotEmpty
+                                  ? Text(
+                                      subTask.description,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: subTask.isCompleted ? Colors.grey : Theme.of(context).hintColor,
+                                      ),
+                                    )
+                                  : null,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (subTask.dueDate != null)
+                                    Icon(Icons.calendar_today, size: 16, color: Theme.of(context).hintColor),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () {
+                                      debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title}');
+                                      setState(() {
+                                        _subTasks.removeAt(index);
+                                      });
+                                    },
+                                    tooltip: 'Supprimer cette sous-tâche',
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  const SizedBox(height: 24),
+                ] else ...[
+                  const Text(
+                    'Niveau maximum de sous-tâches atteint.',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              // Temps passé
+              Row(
+                children: [
+                  const Icon(Icons.timelapse, size: 16),
+                  const SizedBox(width: 4),
+                  Text('Temps passé : ${_formatElapsedTime(widget.todo.elapsedSeconds)}', style: const TextStyle(fontSize: 14)),
+                  IconButton(
+                    icon: const Icon(Icons.refresh, size: 18),
+                    tooltip: 'Réinitialiser le temps',
+                    onPressed: () {
+                      setState(() {
+                        widget.todo.elapsedSeconds = 0;
+                        if (TimerService().isTaskRunning(widget.todo.id)) {
+                          TimerService().pauseTimer();
+                        }
+                      });
+                      // Sauvegarder la tâche réinitialisée
+                      final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
+                      if (homeState != null) {
+                        homeState._saveData();
+                      }
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // Boutons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Annuler'),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ElevatedButton(
+                        onPressed: () {
+                          if (_titleController.text.trim().isEmpty || _selectedProject == null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
+                            );
+                            return;
+                          }
+                          int? estimatedMinutes;
+                          if (_estimatedTimeController.text.trim().isNotEmpty) {
+                            try {
+                              estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+                              if (estimatedMinutes <= 0) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
+                                );
+                                return;
+                              }
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
+                              );
+                              return;
+                            }
+                          }
+                          final updatedTodo = TodoItem(
+                            id: widget.todo.id,
+                            title: _titleController.text.trim(),
+                            description: _descriptionController.text.trim(),
+                            dueDate: _selectedDate,
+                            priority: _selectedPriority,
+                            projectId: _selectedProject!.id,
+                            isCompleted: widget.todo.isCompleted,
+                            parentId: widget.todo.parentId,
+                            level: widget.todo.level,
+                            reminder: _selectedReminder,
+                            estimatedMinutes: estimatedMinutes,
+                            elapsedMinutes: widget.todo.elapsedMinutes,
+                            elapsedSeconds: widget.todo.elapsedSeconds,
+                          );
+                          Navigator.pop(context, {'todo': updatedTodo});
+                            },
+                      child: const Text('Sauvegarder'),
+                    ),
+                  ),
+                ],
+                ),
+                const SizedBox(height: 24),
+                // Bouton de suppression
+                OutlinedButton.icon(
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('Supprimer la tâche'),
+                        content: const Text('Êtes-vous sûr de vouloir supprimer cette tâche et toutes ses sous-tâches ?'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Annuler'),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              debugPrint('🗑️ Bouton suppression cliqué pour la tâche ${widget.todo.id}');
+                              widget.onDeleteTodo(widget.todo.id);
+                              Navigator.pop(context); // Fermer la boîte de dialogue
+                              Navigator.pop(context); // Fermer la modale d'édition
+                            },
+                            style: TextButton.styleFrom(foregroundColor: Colors.red),
+                            child: const Text('Supprimer'),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                  ),
+                  icon: const Icon(Icons.delete),
+                  label: const Text('Supprimer cette tâche'),
+                ),
+              ],
           ),
         ),
       ),
@@ -2223,6 +2294,7 @@ class AddProjectDialog extends StatefulWidget {
 class _AddProjectDialogState extends State<AddProjectDialog> {
   final TextEditingController _nameController = TextEditingController();
   Color _selectedColor = Colors.blue;
+  bool _isNameValid = false;
 
   final List<Color> _availableColors = [
     Colors.blue,
@@ -2234,6 +2306,18 @@ class _AddProjectDialogState extends State<AddProjectDialog> {
     Colors.indigo,
     Colors.teal,
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController.addListener(_onNameChanged);
+  }
+
+  void _onNameChanged() {
+    setState(() {
+      _isNameValid = _nameController.text.trim().isNotEmpty;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2284,9 +2368,8 @@ class _AddProjectDialogState extends State<AddProjectDialog> {
           child: const Text('Annuler'),
         ),
         ElevatedButton(
-          onPressed: _nameController.text.trim().isEmpty
-              ? null
-              : () {
+          onPressed: _isNameValid
+              ? () {
                   final newProject = Project(
                     id: DateTime.now().millisecondsSinceEpoch,
                     name: _nameController.text.trim(),
@@ -2294,7 +2377,8 @@ class _AddProjectDialogState extends State<AddProjectDialog> {
                     isDefault: false,
                   );
                   Navigator.pop(context, newProject);
-                },
+                }
+              : null,
           child: const Text('Créer'),
         ),
       ],
@@ -2308,8 +2392,6 @@ class _AddProjectDialogState extends State<AddProjectDialog> {
   }
 }
 
-enum Priority { low, medium, high }
-
 String getPriorityText(Priority priority) {
   switch (priority) {
     case Priority.low:
@@ -2318,173 +2400,6 @@ String getPriorityText(Priority priority) {
       return 'Moyenne';
     case Priority.high:
       return 'Haute';
-  }
-}
-
-class Project {
-  final int id;
-  final String name;
-  final Color color;
-  final bool isDefault;
-
-  Project({
-    required this.id,
-    required this.name,
-    required this.color,
-    required this.isDefault,
-  });
-
-  // Convertir en Map pour la sauvegarde
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'name': name,
-      'color': color.value,
-      'isDefault': isDefault,
-    };
-  }
-
-  // Créer depuis une Map
-  factory Project.fromMap(Map<String, dynamic> map) {
-    return Project(
-      id: map['id'],
-      name: map['name'],
-      color: Color(map['color']),
-      isDefault: map['isDefault'],
-    );
-  }
-}
-
-class TodoItem {
-  final int id;
-  final String title;
-  final String description;
-  final DateTime? dueDate;
-  final Priority priority;
-  final int projectId;
-  bool isCompleted;
-  final int? parentId; // ID de la tâche parente (null pour les tâches racines)
-  final int level; // Niveau de profondeur (0 = tâche racine, 1-3 = sous-tâches)
-  final DateTime? reminder; // Date et heure du rappel
-  final int? estimatedMinutes; // Temps estimé en minutes
-  int elapsedMinutes; // Temps passé en minutes
-  int elapsedSeconds; // Temps passé en secondes
-
-  TodoItem({
-    required this.id,
-    required this.title,
-    required this.description,
-    this.dueDate,
-    required this.priority,
-    required this.projectId,
-    required this.isCompleted,
-    this.parentId,
-    this.level = 0,
-    this.reminder,
-    this.estimatedMinutes,
-    this.elapsedMinutes = 0,
-    this.elapsedSeconds = 0,
-  });
-
-  // Méthode pour créer une sous-tâche
-  TodoItem createSubTask({
-    required String title,
-    required String description,
-    DateTime? dueDate,
-    Priority priority = Priority.medium,
-    bool isCompleted = false,
-    int? estimatedMinutes,
-  }) {
-    if (level >= 3) {
-      throw Exception('Impossible de créer une sous-tâche au-delà du niveau 3');
-    }
-    
-    return TodoItem(
-      id: DateTime.now().millisecondsSinceEpoch,
-      title: title,
-      description: description,
-      dueDate: dueDate,
-      priority: priority,
-      projectId: this.projectId, // Hérite du projet parent
-      isCompleted: isCompleted,
-      parentId: this.id,
-      level: this.level + 1,
-      estimatedMinutes: estimatedMinutes,
-    );
-  }
-
-  // Méthode pour vérifier si c'est une tâche racine
-  bool get isRootTask => parentId == null;
-
-  // Méthode pour vérifier si c'est une sous-tâche
-  bool get isSubTask => parentId != null;
-
-  // Méthode pour vérifier si on peut ajouter des sous-tâches
-  bool get canHaveSubTasks => level < 3;
-
-  // Méthode pour formater le temps estimé
-  String get estimatedTimeText {
-    if (estimatedMinutes == null) return 'Non défini';
-    final hours = estimatedMinutes! ~/ 60;
-    final minutes = estimatedMinutes! % 60;
-    if (hours > 0) {
-      return '${hours}h${minutes > 0 ? ' ${minutes}min' : ''}';
-    }
-    return '${minutes}min';
-  }
-
-  // Méthode pour formater le temps passé
-  String get elapsedTimeText {
-    final hours = elapsedMinutes ~/ 60;
-    final minutes = elapsedMinutes % 60;
-    if (hours > 0) {
-      return '${hours}h${minutes > 0 ? ' ${minutes}min' : ''}';
-    }
-    return '${minutes}min';
-  }
-
-  // Méthode pour calculer le pourcentage de progression
-  double get progressPercentage {
-    if (estimatedMinutes == null || estimatedMinutes == 0) return 0.0;
-    return (elapsedMinutes / estimatedMinutes!).clamp(0.0, 1.0);
-  }
-
-  // Convertir en Map pour la sauvegarde
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'title': title,
-      'description': description,
-      'dueDate': dueDate?.millisecondsSinceEpoch,
-      'priority': priority.index,
-      'projectId': projectId,
-      'isCompleted': isCompleted,
-      'parentId': parentId,
-      'level': level,
-      'reminder': reminder?.millisecondsSinceEpoch,
-      'estimatedMinutes': estimatedMinutes,
-      'elapsedMinutes': elapsedMinutes,
-      'elapsedSeconds': elapsedSeconds,
-    };
-  }
-
-  // Créer depuis une Map
-  factory TodoItem.fromMap(Map<String, dynamic> map) {
-    return TodoItem(
-      id: map['id'],
-      title: map['title'],
-      description: map['description'],
-      dueDate: map['dueDate'] != null ? DateTime.fromMillisecondsSinceEpoch(map['dueDate']) : null,
-      priority: Priority.values[map['priority']],
-      projectId: map['projectId'],
-      isCompleted: map['isCompleted'],
-      parentId: map['parentId'],
-      level: map['level'] ?? 0,
-      reminder: map['reminder'] != null ? DateTime.fromMillisecondsSinceEpoch(map['reminder']) : null,
-      estimatedMinutes: map['estimatedMinutes'],
-      elapsedMinutes: map['elapsedMinutes'] ?? 0,
-      elapsedSeconds: (map['elapsedSeconds'] ?? ((map['elapsedMinutes'] ?? 0) * 60)) as int,
-    );
   }
 }
 
@@ -2499,8 +2414,14 @@ String _formatElapsedTime(int totalSeconds) {
 class SettingsScreen extends StatefulWidget {
   final Function(ThemeData) onThemeChanged;
   final Function() onSettingsChanged;
+  final Function() onDataReload;
   
-  const SettingsScreen({super.key, required this.onThemeChanged, required this.onSettingsChanged});
+  const SettingsScreen({
+    super.key, 
+    required this.onThemeChanged, 
+    required this.onSettingsChanged,
+    required this.onDataReload,
+  });
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -2654,6 +2575,263 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 20),
+                // Section Données
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.storage, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Données',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Sauvegardez ou restaurez toutes vos données (tâches, projets, préférences)',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                try {
+                                  // Afficher un indicateur de chargement
+                                  showDialog(
+                                    context: context,
+                                    barrierDismissible: false,
+                                    builder: (context) => const Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  );
+
+                                  final exportService = DataExportImportService();
+                                  final data = exportService.exportAllData();
+                                  
+                                  final fileService = FileService();
+                                  final savedPath = await fileService.saveDataToFile(data);
+                                  
+                                  // Fermer l'indicateur de chargement
+                                  Navigator.of(context).pop();
+                                  
+                                  if (savedPath != null) {
+                                    debugPrint('✅ Export réussi: \\${data.length} clés -> \\${savedPath}');
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Sauvegarde réussie !\\nFichier: \\${savedPath.split('/').last}'),
+                                        backgroundColor: Colors.green,
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Sauvegarde annulée'),
+                                        backgroundColor: Colors.orange,
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  // Fermer l'indicateur de chargement en cas d'erreur
+                                  if (Navigator.canPop(context)) {
+                                    Navigator.of(context).pop();
+                                  }
+                                  debugPrint('❌ Erreur export: \\${e}');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Erreur lors de la sauvegarde: \\${e}'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.download),
+                              label: const Text('Sauvegarder'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Theme.of(context).colorScheme.primary,
+                                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                try {
+                                  // Afficher un indicateur de chargement
+                                  showDialog(
+                                    context: context,
+                                    barrierDismissible: false,
+                                    builder: (context) => const Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  );
+
+                                  final fileService = FileService();
+                                  final data = await fileService.loadDataFromFile();
+                                  
+                                  // Fermer l'indicateur de chargement
+                                  Navigator.of(context).pop();
+                                  
+                                  if (data != null) {
+                                    // Vérifier que le fichier est valide
+                                    if (!fileService.isValidBackupFile(data)) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Fichier invalide. Format de sauvegarde non reconnu.'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                      return;
+                                    }
+
+                                    final exportService = DataExportImportService();
+                                    await exportService.importAllData(data);
+                                    
+                                    debugPrint('✅ Import réussi depuis fichier');
+                                    
+                                    // Forcer le rechargement des données dans main.dart
+                                    final localStorageService = LocalStorageService();
+                                    await localStorageService.reloadData();
+                                    
+                                    // Recharger les données dans l'interface
+                                    widget.onDataReload();
+                                    
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Restauration réussie !\\nDonnées importées avec succès'),
+                                        backgroundColor: Colors.green,
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                    
+                                    // Rafraîchir l'interface
+                                    widget.onSettingsChanged();
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Import annulé'),
+                                        backgroundColor: Colors.orange,
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  // Fermer l'indicateur de chargement en cas d'erreur
+                                  if (Navigator.canPop(context)) {
+                                    Navigator.of(context).pop();
+                                  }
+                                  debugPrint('❌ Erreur import: \\${e}');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Erreur lors de la restauration: \\${e}'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.upload),
+                              label: const Text('Restaurer'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Theme.of(context).colorScheme.secondary,
+                                foregroundColor: Theme.of(context).colorScheme.onSecondary,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Confirmer la suppression'),
+                                    content: const Text('Êtes-vous sûr de vouloir supprimer TOUTES les données ? Cette action est irréversible.'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.of(context).pop(false),
+                                        child: const Text('Annuler'),
+                                      ),
+                                      ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.red,
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        onPressed: () => Navigator.of(context).pop(true),
+                                        child: const Text('Supprimer'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed == true) {
+                                  try {
+                                    showDialog(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (context) => const Center(child: CircularProgressIndicator()),
+                                    );
+                                    await DataExportImportService().clearAllData();
+                                    Navigator.of(context).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Toutes les données ont été supprimées.'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                    widget.onSettingsChanged();
+                                  } catch (e) {
+                                    if (Navigator.canPop(context)) Navigator.of(context).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Erreur lors de la suppression: \\${e}'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                              icon: const Icon(Icons.delete_forever, color: Colors.red),
+                              label: const Text('Supprimer toutes les données'),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.red, width: 2),
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
