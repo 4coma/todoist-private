@@ -38,17 +38,35 @@ class PreferencesService {
     await setPreference('show_descriptions', value);
   }
 
-  // Thème sélectionné
+  // === NOUVEAU SYSTÈME DE THÈMES ===
+  
+  // Couleur sélectionnée pour les éléments
+  String get selectedColor => getPreference<String>('selected_color') ?? 'blue';
+  
+  Future<void> setSelectedColor(String colorName) async {
+    await setPreference('selected_color', colorName);
+  }
+
+  // Mode sombre activé
+  bool get isDarkMode => getPreference<bool>('is_dark_mode') ?? false;
+  
+  Future<void> setDarkMode(bool value) async {
+    await setPreference('is_dark_mode', value);
+  }
+
+  // === ANCIEN SYSTÈME DE THÈMES (COMPATIBILITÉ) ===
+
+  // Thème sélectionné (ancien système)
   String get selectedTheme => getPreference<String>('selected_theme') ?? 'blue';
   
   Future<void> setSelectedTheme(String themeName) async {
     await setPreference('selected_theme', themeName);
   }
 
-  // Mode sombre
-  bool get isDarkMode => getPreference<bool>('dark_mode') ?? false;
+  // Mode sombre (ancien système)
+  bool get darkMode => getPreference<bool>('dark_mode') ?? false;
   
-  Future<void> setDarkMode(bool value) async {
+  Future<void> setDarkModeOld(bool value) async {
     await setPreference('dark_mode', value);
   }
 
@@ -84,11 +102,25 @@ class PreferencesService {
     await setPreference('auto_reminders', value);
   }
 
-  // Heure de rappel par défaut (minutes avant l'échéance)
-  int get defaultReminderMinutes => getPreference<int>('default_reminder_minutes') ?? 30;
+  // Minutes par défaut pour les rappels
+  int get defaultReminderMinutes => getPreference<int>('default_reminder_minutes') ?? 15;
   
   Future<void> setDefaultReminderMinutes(int minutes) async {
     await setPreference('default_reminder_minutes', minutes);
+  }
+
+  // Vibration activée
+  bool get enableVibration => getPreference<bool>('enable_vibration') ?? true;
+  
+  Future<void> setEnableVibration(bool value) async {
+    await setPreference('enable_vibration', value);
+  }
+
+  // Son de notification activé
+  bool get enableNotificationSound => getPreference<bool>('enable_notification_sound') ?? true;
+  
+  Future<void> setEnableNotificationSound(bool value) async {
+    await setPreference('enable_notification_sound', value);
   }
 
   // === PRÉFÉRENCES DE TIMER ===
@@ -101,17 +133,17 @@ class PreferencesService {
   }
 
   // Pause automatique du timer
-  bool get autoPauseTimer => getPreference<bool>('auto_pause_timer') ?? true;
+  bool get autoPauseTimer => getPreference<bool>('auto_pause_timer') ?? false;
   
   Future<void> setAutoPauseTimer(bool value) async {
     await setPreference('auto_pause_timer', value);
   }
 
-  // Durée de pause automatique (secondes)
-  int get autoPauseDuration => getPreference<int>('auto_pause_duration') ?? 300; // 5 minutes
+  // Durée de pause automatique
+  int get autoPauseDuration => getPreference<int>('auto_pause_duration') ?? 5;
   
-  Future<void> setAutoPauseDuration(int seconds) async {
-    await setPreference('auto_pause_duration', seconds);
+  Future<void> setAutoPauseDuration(int minutes) async {
+    await setPreference('auto_pause_duration', minutes);
   }
 
   // === PRÉFÉRENCES DE SAUVEGARDE ===
@@ -123,39 +155,25 @@ class PreferencesService {
     await setPreference('auto_save', value);
   }
 
-  // Fréquence de sauvegarde (secondes)
-  int get saveFrequency => getPreference<int>('save_frequency') ?? 30;
+  // Fréquence de sauvegarde (en minutes)
+  int get saveFrequency => getPreference<int>('save_frequency') ?? 5;
   
-  Future<void> setSaveFrequency(int seconds) async {
-    await setPreference('save_frequency', seconds);
+  Future<void> setSaveFrequency(int minutes) async {
+    await setPreference('save_frequency', minutes);
   }
 
-  // === PRÉFÉRENCES D'INTERFACE ===
+  // === PRÉFÉRENCES D'ANIMATIONS ===
 
-  // Animation des transitions
+  // Animations activées
   bool get enableAnimations => getPreference<bool>('enable_animations') ?? true;
   
   Future<void> setEnableAnimations(bool value) async {
     await setPreference('enable_animations', value);
   }
 
-  // Vibration
-  bool get enableVibration => getPreference<bool>('enable_vibration') ?? true;
-  
-  Future<void> setEnableVibration(bool value) async {
-    await setPreference('enable_vibration', value);
-  }
+  // === PRÉFÉRENCES DE SÉCURITÉ ===
 
-  // Son des notifications
-  bool get enableNotificationSound => getPreference<bool>('enable_notification_sound') ?? true;
-  
-  Future<void> setEnableNotificationSound(bool value) async {
-    await setPreference('enable_notification_sound', value);
-  }
-
-  // === PRÉFÉRENCES DE DONNÉES ===
-
-  // Taille maximale des données (MB)
+  // Taille maximale des données (en MB)
   int get maxDataSize => getPreference<int>('max_data_size') ?? 100;
   
   Future<void> setMaxDataSize(int megabytes) async {
@@ -163,32 +181,30 @@ class PreferencesService {
   }
 
   // Compression des données
-  bool get compressData => getPreference<bool>('compress_data') ?? false;
+  bool get compressData => getPreference<bool>('compress_data') ?? true;
   
   Future<void> setCompressData(bool value) async {
     await setPreference('compress_data', value);
   }
 
-  // === PRÉFÉRENCES DE SÉCURITÉ ===
-
   // Chiffrement des données
-  bool get encryptData => getPreference<bool>('encrypt_data') ?? true;
+  bool get encryptData => getPreference<bool>('encrypt_data') ?? false;
   
   Future<void> setEncryptData(bool value) async {
     await setPreference('encrypt_data', value);
   }
 
-  // Verrouillage par biométrie
+  // Verrouillage biométrique
   bool get biometricLock => getPreference<bool>('biometric_lock') ?? false;
   
   Future<void> setBiometricLock(bool value) async {
     await setPreference('biometric_lock', value);
   }
 
-  // === PRÉFÉRENCES DE STATISTIQUES ===
+  // === PRÉFÉRENCES DE PRIVACITÉ ===
 
   // Collecte de statistiques
-  bool get collectStats => getPreference<bool>('collect_stats') ?? true;
+  bool get collectStats => getPreference<bool>('collect_stats') ?? false;
   
   Future<void> setCollectStats(bool value) async {
     await setPreference('collect_stats', value);
@@ -207,6 +223,8 @@ class PreferencesService {
   Future<void> resetAllPreferences() async {
     final keys = [
       'show_descriptions',
+      'selected_color',
+      'is_dark_mode',
       'selected_theme',
       'dark_mode',
       'default_sort_type',
@@ -239,6 +257,8 @@ class PreferencesService {
   Future<void> resetDisplayPreferences() async {
     final keys = [
       'show_descriptions',
+      'selected_color',
+      'is_dark_mode',
       'selected_theme',
       'dark_mode',
       'default_sort_type',
@@ -303,6 +323,7 @@ class PreferencesService {
   bool validatePreference(String key, dynamic value) {
     switch (key) {
       case 'show_descriptions':
+      case 'is_dark_mode':
       case 'dark_mode':
       case 'notifications_enabled':
       case 'auto_reminders':
@@ -325,6 +346,7 @@ class PreferencesService {
       case 'max_data_size':
         return value is int && value > 0;
       
+      case 'selected_color':
       case 'selected_theme':
       case 'default_sort_type':
         return value is String && value.isNotEmpty;

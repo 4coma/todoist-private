@@ -31,6 +31,8 @@ class TodoApp extends StatefulWidget {
 
 class _TodoAppState extends State<TodoApp> {
   ThemeData _currentTheme = AppThemes.blueTheme;
+  String _selectedColor = 'blue';
+  bool _isDarkMode = false;
 
   @override
   void initState() {
@@ -41,14 +43,52 @@ class _TodoAppState extends State<TodoApp> {
   Future<void> _loadSavedTheme() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final savedTheme = prefs.getString('selected_theme') ?? 'blue';
+      final selectedColor = prefs.getString('selected_color') ?? 'blue';
+      final isDarkMode = prefs.getBool('is_dark_mode') ?? false;
       
       setState(() {
-        _currentTheme = _getThemeFromName(savedTheme);
+        _selectedColor = selectedColor;
+        _isDarkMode = isDarkMode;
+        _currentTheme = AppThemes.getTheme(selectedColor, isDarkMode);
       });
-      debugPrint('✅ Thème chargé: $savedTheme');
+      debugPrint('✅ Thème chargé: couleur=$selectedColor, dark=$isDarkMode');
     } catch (e) {
       debugPrint('❌ Erreur lors du chargement du thème: $e');
+    }
+  }
+
+  void _changeTheme(String colorName, bool isDarkMode) async {
+    setState(() {
+      _selectedColor = colorName;
+      _isDarkMode = isDarkMode;
+      _currentTheme = AppThemes.getTheme(colorName, isDarkMode);
+    });
+    
+    // Sauvegarder les préférences de thème
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('selected_color', colorName);
+      await prefs.setBool('is_dark_mode', isDarkMode);
+      debugPrint('✅ Thème sauvegardé: couleur=$colorName, dark=$isDarkMode');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la sauvegarde du thème: $e');
+    }
+  }
+
+  // Méthode de compatibilité avec l'ancien système
+  void _changeThemeLegacy(ThemeData theme) async {
+    setState(() {
+      _currentTheme = theme;
+    });
+    
+    // Sauvegarder le thème sélectionné
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final themeName = _getThemeName(theme);
+      await prefs.setString('selected_theme', themeName);
+      debugPrint('✅ Thème sauvegardé: $themeName');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la sauvegarde du thème: $e');
     }
   }
 
@@ -84,28 +124,15 @@ class _TodoAppState extends State<TodoApp> {
     return 'blue';
   }
 
-  void _changeTheme(ThemeData theme) async {
-    setState(() {
-      _currentTheme = theme;
-    });
-    
-    // Sauvegarder le thème sélectionné
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final themeName = _getThemeName(theme);
-      await prefs.setString('selected_theme', themeName);
-      debugPrint('✅ Thème sauvegardé: $themeName');
-    } catch (e) {
-      debugPrint('❌ Erreur lors de la sauvegarde du thème: $e');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Todo App',
       theme: _currentTheme,
-      home: TodoHomePage(onThemeChanged: _changeTheme),
+      home: TodoHomePage(
+        onThemeChanged: _changeTheme,
+        onThemeChangedLegacy: _changeThemeLegacy,
+      ),
     );
   }
 }
@@ -118,9 +145,14 @@ enum SortType {
 }
 
 class TodoHomePage extends StatefulWidget {
-  final Function(ThemeData) onThemeChanged;
+  final Function(String, bool) onThemeChanged;
+  final Function(ThemeData) onThemeChangedLegacy;
   
-  const TodoHomePage({super.key, required this.onThemeChanged});
+  const TodoHomePage({
+    super.key, 
+    required this.onThemeChanged,
+    required this.onThemeChangedLegacy,
+  });
 
   @override
   State<TodoHomePage> createState() => _TodoHomePageState();
@@ -140,6 +172,10 @@ class _TodoHomePageState extends State<TodoHomePage> {
   SortType _currentSort = SortType.dateAdded;
   bool _isSidebarOpen = false;
   bool _showDescriptions = false;
+  
+  // Variables pour le nouveau système de thèmes
+  String _selectedColor = 'blue';
+  bool _isDarkMode = false;
 
   // Set pour suivre les tâches dépliées (affichant leurs sous-tâches)
   final Set<int> _expandedTasks = {};
@@ -152,6 +188,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
     _timerService.addListener(_onTimerTick);
     _loadData();
     _loadSettings();
+    _loadThemePreferences();
   }
 
   @override
@@ -224,6 +261,20 @@ class _TodoHomePageState extends State<TodoHomePage> {
       debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions');
     } catch (e) {
       debugPrint('❌ Erreur lors du chargement des paramètres: $e');
+    }
+  }
+
+  // Charger les préférences de thème
+  Future<void> _loadThemePreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _selectedColor = prefs.getString('selected_color') ?? 'blue';
+        _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
+      });
+      debugPrint('✅ Préférences de thème chargées: couleur = $_selectedColor, dark = $_isDarkMode');
+    } catch (e) {
+      debugPrint('❌ Erreur lors du chargement des préférences de thème: $e');
     }
   }
 
@@ -760,7 +811,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
             Padding(
               padding: const EdgeInsets.all(20),
               child: Text(
-                'Choisir un thème',
+                'Personnaliser le thème',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
@@ -769,19 +820,65 @@ class _TodoHomePageState extends State<TodoHomePage> {
                 ),
               ),
             ),
+            // Section Couleurs
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Wrap(
-                spacing: 12,
-                runSpacing: 12,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildModernThemeOption('Bleu', AppThemes.blueTheme, const Color(0xFF2563EB)),
-                  _buildModernThemeOption('Vert', AppThemes.greenTheme, const Color(0xFF059669)),
-                  _buildModernThemeOption('Violet', AppThemes.purpleTheme, const Color(0xFF7C3AED)),
-                  _buildModernThemeOption('Orange', AppThemes.orangeTheme, const Color(0xFFEA580C)),
-                  _buildModernThemeOption('Gradient', AppThemes.gradientTheme, const Color(0xFF667EEA)),
-                  _buildModernThemeOption('Sombre', AppThemes.darkTheme, const Color(0xFF1F2937)),
-                  _buildModernThemeOption('Minimal', AppThemes.minimalTheme, const Color(0xFF6B7280)),
+                  Text(
+                    'Couleur des éléments',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _buildColorOption('Bleu', 'blue', const Color(0xFF2563EB)),
+                      _buildColorOption('Vert', 'green', const Color(0xFF059669)),
+                      _buildColorOption('Violet', 'purple', const Color(0xFF7C3AED)),
+                      _buildColorOption('Orange', 'orange', const Color(0xFFEA580C)),
+                      _buildColorOption('Rose', 'pink', const Color(0xFFEC4899)),
+                      _buildColorOption('Teal', 'teal', const Color(0xFF0D9488)),
+                      _buildColorOption('Indigo', 'indigo', const Color(0xFF4F46E5)),
+                      _buildColorOption('Rouge', 'red', const Color(0xFFDC2626)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Section Mode
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Mode d\'affichage',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildModeOption('Clair', false, Icons.wb_sunny),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildModeOption('Sombre', true, Icons.nightlight_round),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -799,6 +896,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
       backgroundColor: Colors.transparent,
       builder: (context) => SettingsScreen(
         onThemeChanged: widget.onThemeChanged,
+        onThemeChangedLegacy: widget.onThemeChangedLegacy,
         onSettingsChanged: () {
           _loadSettings();
           _loadData();
@@ -808,10 +906,128 @@ class _TodoHomePageState extends State<TodoHomePage> {
     );
   }
 
+  Widget _buildColorOption(String name, String colorName, Color color) {
+    final isSelected = _selectedColor == colorName;
+    
+    return InkWell(
+      onTap: () {
+        widget.onThemeChanged(colorName, _isDarkMode);
+        Navigator.pop(context);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.1),
+              color.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color : color.withOpacity(0.2),
+            width: isSelected ? 2.5 : 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              name,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ).animate().scale(
+        duration: 150.ms,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
+  Widget _buildModeOption(String name, bool isDark, IconData icon) {
+    final isSelected = _isDarkMode == isDark;
+    
+    return InkWell(
+      onTap: () {
+        widget.onThemeChanged(_selectedColor, isDark);
+        Navigator.pop(context);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              isSelected 
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+                : Colors.grey.withOpacity(0.1),
+              isSelected 
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.05)
+                : Colors.grey.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected 
+              ? Theme.of(context).colorScheme.primary
+              : Colors.grey.withOpacity(0.3),
+            width: isSelected ? 2.5 : 1.5,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              color: isSelected 
+                ? Theme.of(context).colorScheme.primary
+                : Colors.grey,
+              size: 24,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              name,
+              style: TextStyle(
+                color: isSelected 
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.grey,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ).animate().scale(
+        duration: 150.ms,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
   Widget _buildModernThemeOption(String name, ThemeData theme, Color color) {
     return InkWell(
       onTap: () {
-        widget.onThemeChanged(theme);
+        widget.onThemeChangedLegacy(theme);
         Navigator.pop(context);
       },
       child: Container(
@@ -2412,13 +2628,15 @@ String _formatElapsedTime(int totalSeconds) {
 }
 
 class SettingsScreen extends StatefulWidget {
-  final Function(ThemeData) onThemeChanged;
+  final Function(String, bool) onThemeChanged;
+  final Function(ThemeData) onThemeChangedLegacy;
   final Function() onSettingsChanged;
   final Function() onDataReload;
   
   const SettingsScreen({
     super.key, 
-    required this.onThemeChanged, 
+    required this.onThemeChanged,
+    required this.onThemeChangedLegacy,
     required this.onSettingsChanged,
     required this.onDataReload,
   });
@@ -2429,17 +2647,28 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _showDescriptions = false;
+  String _selectedColor = 'blue';
+  bool _isDarkMode = false;
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _loadThemePreferences();
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _showDescriptions = prefs.getBool('show_descriptions') ?? false;
+    });
+  }
+
+  Future<void> _loadThemePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _selectedColor = prefs.getString('selected_color') ?? 'blue';
+      _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
     });
   }
 
@@ -2519,17 +2748,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       ),
                       const SizedBox(height: 16),
+                      // Section Couleurs
+                      Text(
+                        'Couleur des éléments',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
-                          _buildThemeOption('Bleu', AppThemes.blueTheme, const Color(0xFF2563EB)),
-                          _buildThemeOption('Vert', AppThemes.greenTheme, const Color(0xFF059669)),
-                          _buildThemeOption('Violet', AppThemes.purpleTheme, const Color(0xFF7C3AED)),
-                          _buildThemeOption('Orange', AppThemes.orangeTheme, const Color(0xFFEA580C)),
-                          _buildThemeOption('Gradient', AppThemes.gradientTheme, const Color(0xFF667EEA)),
-                          _buildThemeOption('Sombre', AppThemes.darkTheme, const Color(0xFF1F2937)),
-                          _buildThemeOption('Minimal', AppThemes.minimalTheme, const Color(0xFF6B7280)),
+                          _buildColorOptionSettings('Bleu', 'blue', const Color(0xFF2563EB)),
+                          _buildColorOptionSettings('Vert', 'green', const Color(0xFF059669)),
+                          _buildColorOptionSettings('Violet', 'purple', const Color(0xFF7C3AED)),
+                          _buildColorOptionSettings('Orange', 'orange', const Color(0xFFEA580C)),
+                          _buildColorOptionSettings('Rose', 'pink', const Color(0xFFEC4899)),
+                          _buildColorOptionSettings('Teal', 'teal', const Color(0xFF0D9488)),
+                          _buildColorOptionSettings('Indigo', 'indigo', const Color(0xFF4F46E5)),
+                          _buildColorOptionSettings('Rouge', 'red', const Color(0xFFDC2626)),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      // Section Mode
+                      Text(
+                        'Mode d\'affichage',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildModeOptionSettings('Clair', false, Icons.wb_sunny),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildModeOptionSettings('Sombre', true, Icons.nightlight_round),
+                          ),
                         ],
                       ),
                     ],
@@ -2841,10 +3103,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildColorOptionSettings(String name, String colorName, Color color) {
+    final isSelected = _selectedColor == colorName;
+    
+    return InkWell(
+      onTap: () {
+        widget.onThemeChanged(colorName, _isDarkMode);
+        setState(() {
+          _selectedColor = colorName;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.1),
+              color.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? color : color.withOpacity(0.2),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              name,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ).animate().scale(
+        duration: 150.ms,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
+  Widget _buildModeOptionSettings(String name, bool isDark, IconData icon) {
+    final isSelected = _isDarkMode == isDark;
+    
+    return InkWell(
+      onTap: () {
+        widget.onThemeChanged(_selectedColor, isDark);
+        setState(() {
+          _isDarkMode = isDark;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              isSelected 
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+                : Colors.grey.withOpacity(0.1),
+              isSelected 
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.05)
+                : Colors.grey.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected 
+              ? Theme.of(context).colorScheme.primary
+              : Colors.grey.withOpacity(0.3),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              color: isSelected 
+                ? Theme.of(context).colorScheme.primary
+                : Colors.grey,
+              size: 20,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              name,
+              style: TextStyle(
+                color: isSelected 
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.grey,
+                fontWeight: FontWeight.w600,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ).animate().scale(
+        duration: 150.ms,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
   Widget _buildThemeOption(String name, ThemeData theme, Color color) {
     return InkWell(
       onTap: () {
-        widget.onThemeChanged(theme);
+        widget.onThemeChangedLegacy(theme);
         Navigator.pop(context);
       },
       child: Container(
