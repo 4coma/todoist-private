@@ -5,6 +5,7 @@ import '../models/project.dart';
 import '../models/app_data.dart';
 import 'local_storage_service.dart';
 import 'notification_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class TestDataGeneratorService {
   static const String _testDataKey = 'test_data_generated';
@@ -14,7 +15,7 @@ class TestDataGeneratorService {
     final localStorageService = LocalStorageService();
     
     // Vérifier si les données de test ont déjà été générées
-    final testDataGenerated = await localStorageService.getBool(_testDataKey) ?? false;
+    final testDataGenerated = await _getBool(_testDataKey) ?? false;
     if (testDataGenerated) {
       debugPrint('Test data already generated');
       return;
@@ -25,33 +26,38 @@ class TestDataGeneratorService {
     // Créer des projets de test
     final projects = [
       Project(
-        id: 'proj_work',
+        id: 1,
         name: 'Travail',
-        color: 'blue',
+        color: Colors.blue,
+        isDefault: false,
         createdAt: DateTime.now().subtract(const Duration(days: 30)),
       ),
       Project(
-        id: 'proj_personal',
+        id: 2,
         name: 'Personnel',
-        color: 'green',
+        color: Colors.green,
+        isDefault: false,
         createdAt: DateTime.now().subtract(const Duration(days: 25)),
       ),
       Project(
-        id: 'proj_shopping',
+        id: 3,
         name: 'Courses',
-        color: 'orange',
+        color: Colors.orange,
+        isDefault: false,
         createdAt: DateTime.now().subtract(const Duration(days: 20)),
       ),
       Project(
-        id: 'proj_health',
+        id: 4,
         name: 'Santé',
-        color: 'red',
+        color: Colors.red,
+        isDefault: false,
         createdAt: DateTime.now().subtract(const Duration(days: 15)),
       ),
       Project(
-        id: 'proj_study',
+        id: 5,
         name: 'Études',
-        color: 'purple',
+        color: Colors.purple,
+        isDefault: false,
         createdAt: DateTime.now().subtract(const Duration(days: 10)),
       ),
     ];
@@ -60,344 +66,346 @@ class TestDataGeneratorService {
     final todos = [
       // TÂCHES TRAVAIL
       TodoItem(
-        id: 'todo_work_1',
+        id: 1,
         title: 'Préparer la présentation client',
         description: 'Créer les slides pour la réunion de demain avec le client ABC Corp. Inclure les chiffres Q4 et les projections.',
         priority: Priority.high,
-        projectId: 'proj_work',
+        projectId: 1,
         dueDate: DateTime.now().add(const Duration(days: 1)),
-        reminderTime: DateTime.now().add(const Duration(hours: 2)),
-        estimatedTime: 120, // 2 heures
-        actualTime: 90, // 1h30 déjà passée
+        reminder: DateTime.now().add(const Duration(hours: 2)),
+        estimatedMinutes: 120, // 2 heures
+        elapsedMinutes: 90, // 1h30 déjà passée
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 2)),
-        subtasks: [
-          TodoItem(
-            id: 'sub_work_1_1',
-            title: 'Collecter les données Q4',
-            description: 'Récupérer les rapports de vente et les analyses',
-            priority: Priority.medium,
-            projectId: 'proj_work',
-            estimatedTime: 45,
-            actualTime: 30,
-            isCompleted: true,
-            createdAt: DateTime.now().subtract(const Duration(days: 1)),
-          ),
-          TodoItem(
-            id: 'sub_work_1_2',
-            title: 'Créer les graphiques',
-            description: 'Visualiser les tendances et les comparaisons',
-            priority: Priority.medium,
-            projectId: 'proj_work',
-            estimatedTime: 60,
-            actualTime: 45,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(hours: 12)),
-            subtasks: [
-              TodoItem(
-                id: 'sub_sub_work_1_2_1',
-                title: 'Graphique des ventes mensuelles',
-                priority: Priority.low,
-                projectId: 'proj_work',
-                estimatedTime: 20,
-                actualTime: 15,
-                isCompleted: true,
-                createdAt: DateTime.now().subtract(const Duration(hours: 6)),
-              ),
-              TodoItem(
-                id: 'sub_sub_work_1_2_2',
-                title: 'Comparaison avec l\'année précédente',
-                priority: Priority.low,
-                projectId: 'proj_work',
-                estimatedTime: 25,
-                actualTime: 0,
-                isCompleted: false,
-                createdAt: DateTime.now().subtract(const Duration(hours: 4)),
-              ),
-            ],
-          ),
-          TodoItem(
-            id: 'sub_work_1_3',
-            title: 'Rédiger le script de présentation',
-            description: 'Préparer les points clés à aborder',
-            priority: Priority.high,
-            projectId: 'proj_work',
-            estimatedTime: 30,
-            actualTime: 15,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(hours: 8)),
-          ),
-        ],
       ),
       
       TodoItem(
-        id: 'todo_work_2',
+        id: 2,
+        title: 'Collecter les données Q4',
+        description: 'Récupérer les rapports de vente et les analyses',
+        priority: Priority.medium,
+        projectId: 1,
+        estimatedMinutes: 45,
+        elapsedMinutes: 30,
+        isCompleted: true,
+        parentId: 1,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(days: 1)),
+      ),
+      
+      TodoItem(
+        id: 3,
+        title: 'Créer les graphiques',
+        description: 'Visualiser les tendances et les comparaisons',
+        priority: Priority.medium,
+        projectId: 1,
+        estimatedMinutes: 60,
+        elapsedMinutes: 45,
+        isCompleted: false,
+        parentId: 1,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(hours: 12)),
+      ),
+      
+      TodoItem(
+        id: 4,
+        title: 'Graphique des ventes mensuelles',
+        priority: Priority.low,
+        projectId: 1,
+        estimatedMinutes: 20,
+        elapsedMinutes: 15,
+        isCompleted: true,
+        parentId: 3,
+        level: 2,
+        createdAt: DateTime.now().subtract(const Duration(hours: 6)),
+      ),
+      
+      TodoItem(
+        id: 5,
+        title: 'Comparaison avec l\'année précédente',
+        priority: Priority.low,
+        projectId: 1,
+        estimatedMinutes: 25,
+        elapsedMinutes: 0,
+        isCompleted: false,
+        parentId: 3,
+        level: 2,
+        createdAt: DateTime.now().subtract(const Duration(hours: 4)),
+      ),
+      
+      TodoItem(
+        id: 6,
+        title: 'Rédiger le script de présentation',
+        description: 'Préparer les points clés à aborder',
+        priority: Priority.high,
+        projectId: 1,
+        estimatedMinutes: 30,
+        elapsedMinutes: 15,
+        isCompleted: false,
+        parentId: 1,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(hours: 8)),
+      ),
+      
+      TodoItem(
+        id: 7,
         title: 'Réviser le code de l\'API',
         description: 'Passer en revue le code de l\'API REST avant la mise en production',
         priority: Priority.medium,
-        projectId: 'proj_work',
+        projectId: 1,
         dueDate: DateTime.now().add(const Duration(days: 3)),
-        reminderTime: DateTime.now().add(const Duration(days: 1)),
-        estimatedTime: 180,
-        actualTime: 0,
+        reminder: DateTime.now().add(const Duration(days: 1)),
+        estimatedMinutes: 180,
+        elapsedMinutes: 0,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 1)),
-        subtasks: [
-          TodoItem(
-            id: 'sub_work_2_1',
-            title: 'Tests unitaires',
-            priority: Priority.high,
-            projectId: 'proj_work',
-            estimatedTime: 60,
-            actualTime: 0,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(hours: 6)),
-          ),
-          TodoItem(
-            id: 'sub_work_2_2',
-            title: 'Documentation API',
-            priority: Priority.medium,
-            projectId: 'proj_work',
-            estimatedTime: 90,
-            actualTime: 0,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(hours: 4)),
-          ),
-        ],
       ),
 
       // TÂCHES PERSONNELLES
       TodoItem(
-        id: 'todo_personal_1',
+        id: 8,
         title: 'Planifier les vacances d\'été',
         description: 'Organiser le voyage en famille pour juillet',
         priority: Priority.medium,
-        projectId: 'proj_personal',
+        projectId: 2,
         dueDate: DateTime.now().add(const Duration(days: 14)),
-        reminderTime: DateTime.now().add(const Duration(days: 7)),
-        estimatedTime: 240,
-        actualTime: 60,
+        reminder: DateTime.now().add(const Duration(days: 7)),
+        estimatedMinutes: 240,
+        elapsedMinutes: 60,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 5)),
-        subtasks: [
-          TodoItem(
-            id: 'sub_personal_1_1',
-            title: 'Rechercher les destinations',
-            priority: Priority.medium,
-            projectId: 'proj_personal',
-            estimatedTime: 120,
-            actualTime: 60,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(days: 4)),
-          ),
-          TodoItem(
-            id: 'sub_personal_1_2',
-            title: 'Réserver les billets d\'avion',
-            priority: Priority.high,
-            projectId: 'proj_personal',
-            estimatedTime: 60,
-            actualTime: 0,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(days: 3)),
-          ),
-        ],
       ),
 
       TodoItem(
-        id: 'todo_personal_2',
+        id: 9,
+        title: 'Rechercher les destinations',
+        priority: Priority.medium,
+        projectId: 2,
+        estimatedMinutes: 120,
+        elapsedMinutes: 60,
+        isCompleted: false,
+        parentId: 8,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(days: 4)),
+      ),
+
+      TodoItem(
+        id: 10,
+        title: 'Réserver les billets d\'avion',
+        priority: Priority.high,
+        projectId: 2,
+        estimatedMinutes: 60,
+        elapsedMinutes: 0,
+        isCompleted: false,
+        parentId: 8,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(days: 3)),
+      ),
+
+      TodoItem(
+        id: 11,
         title: 'Apprendre la guitare',
         description: 'Pratiquer 30 minutes par jour pour progresser',
         priority: Priority.low,
-        projectId: 'proj_personal',
-        estimatedTime: 30,
-        actualTime: 25,
+        projectId: 2,
+        estimatedMinutes: 30,
+        elapsedMinutes: 25,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 10)),
       ),
 
       // TÂCHES COURSES
       TodoItem(
-        id: 'todo_shopping_1',
+        id: 12,
         title: 'Faire les courses de la semaine',
         description: 'Acheter les ingrédients pour les repas de la semaine',
         priority: Priority.high,
-        projectId: 'proj_shopping',
+        projectId: 3,
         dueDate: DateTime.now().add(const Duration(days: 1)),
-        reminderTime: DateTime.now().add(const Duration(hours: 4)),
-        estimatedTime: 90,
-        actualTime: 0,
+        reminder: DateTime.now().add(const Duration(hours: 4)),
+        estimatedMinutes: 90,
+        elapsedMinutes: 0,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 1)),
-        subtasks: [
-          TodoItem(
-            id: 'sub_shopping_1_1',
-            title: 'Fruits et légumes',
-            priority: Priority.medium,
-            projectId: 'proj_shopping',
-            estimatedTime: 20,
-            actualTime: 0,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(hours: 12)),
-          ),
-          TodoItem(
-            id: 'sub_shopping_1_2',
-            title: 'Viandes et poissons',
-            priority: Priority.medium,
-            projectId: 'proj_shopping',
-            estimatedTime: 25,
-            actualTime: 0,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(hours: 10)),
-          ),
-          TodoItem(
-            id: 'sub_shopping_1_3',
-            title: 'Produits d\'entretien',
-            priority: Priority.low,
-            projectId: 'proj_shopping',
-            estimatedTime: 15,
-            actualTime: 0,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(hours: 8)),
-          ),
-        ],
+      ),
+
+      TodoItem(
+        id: 13,
+        title: 'Fruits et légumes',
+        priority: Priority.medium,
+        projectId: 3,
+        estimatedMinutes: 20,
+        elapsedMinutes: 0,
+        isCompleted: false,
+        parentId: 12,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(hours: 12)),
+      ),
+
+      TodoItem(
+        id: 14,
+        title: 'Viandes et poissons',
+        priority: Priority.medium,
+        projectId: 3,
+        estimatedMinutes: 25,
+        elapsedMinutes: 0,
+        isCompleted: false,
+        parentId: 12,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(hours: 10)),
+      ),
+
+      TodoItem(
+        id: 15,
+        title: 'Produits d\'entretien',
+        priority: Priority.low,
+        projectId: 3,
+        estimatedMinutes: 15,
+        elapsedMinutes: 0,
+        isCompleted: false,
+        parentId: 12,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(hours: 8)),
       ),
 
       // TÂCHES SANTÉ
       TodoItem(
-        id: 'todo_health_1',
+        id: 16,
         title: 'Rendez-vous chez le dentiste',
         description: 'Contrôle annuel et détartrage',
         priority: Priority.medium,
-        projectId: 'proj_health',
+        projectId: 4,
         dueDate: DateTime.now().add(const Duration(days: 5)),
-        reminderTime: DateTime.now().add(const Duration(days: 1)),
-        estimatedTime: 60,
-        actualTime: 0,
+        reminder: DateTime.now().add(const Duration(days: 1)),
+        estimatedMinutes: 60,
+        elapsedMinutes: 0,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 7)),
       ),
 
       TodoItem(
-        id: 'todo_health_2',
+        id: 17,
         title: 'Séance de sport',
         description: 'Cardio 45 minutes + musculation',
         priority: Priority.high,
-        projectId: 'proj_health',
-        estimatedTime: 75,
-        actualTime: 0,
+        projectId: 4,
+        estimatedMinutes: 75,
+        elapsedMinutes: 0,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(hours: 2)),
       ),
 
       // TÂCHES ÉTUDES
       TodoItem(
-        id: 'todo_study_1',
+        id: 18,
         title: 'Réviser Flutter et Dart',
         description: 'Préparer l\'examen de certification Flutter',
         priority: Priority.high,
-        projectId: 'proj_study',
+        projectId: 5,
         dueDate: DateTime.now().add(const Duration(days: 10)),
-        reminderTime: DateTime.now().add(const Duration(days: 3)),
-        estimatedTime: 300,
-        actualTime: 120,
+        reminder: DateTime.now().add(const Duration(days: 3)),
+        estimatedMinutes: 300,
+        elapsedMinutes: 120,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 15)),
-        subtasks: [
-          TodoItem(
-            id: 'sub_study_1_1',
-            title: 'Lire la documentation officielle',
-            priority: Priority.medium,
-            projectId: 'proj_study',
-            estimatedTime: 120,
-            actualTime: 60,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(days: 14)),
-          ),
-          TodoItem(
-            id: 'sub_study_1_2',
-            title: 'Pratiquer avec des projets',
-            priority: Priority.high,
-            projectId: 'proj_study',
-            estimatedTime: 180,
-            actualTime: 60,
-            isCompleted: false,
-            createdAt: DateTime.now().subtract(const Duration(days: 12)),
-          ),
-        ],
+      ),
+
+      TodoItem(
+        id: 19,
+        title: 'Lire la documentation officielle',
+        priority: Priority.medium,
+        projectId: 5,
+        estimatedMinutes: 120,
+        elapsedMinutes: 60,
+        isCompleted: false,
+        parentId: 18,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(days: 14)),
+      ),
+
+      TodoItem(
+        id: 20,
+        title: 'Pratiquer avec des projets',
+        priority: Priority.high,
+        projectId: 5,
+        estimatedMinutes: 180,
+        elapsedMinutes: 60,
+        isCompleted: false,
+        parentId: 18,
+        level: 1,
+        createdAt: DateTime.now().subtract(const Duration(days: 12)),
       ),
 
       // TÂCHES SANS PROJET (pour tester "Toutes les tâches")
       TodoItem(
-        id: 'todo_no_project_1',
+        id: 21,
         title: 'Appeler maman',
         description: 'Prendre des nouvelles et organiser le repas de dimanche',
         priority: Priority.medium,
         projectId: null,
         dueDate: DateTime.now().add(const Duration(days: 2)),
-        reminderTime: DateTime.now().add(const Duration(hours: 6)),
-        estimatedTime: 30,
-        actualTime: 0,
+        reminder: DateTime.now().add(const Duration(hours: 6)),
+        estimatedMinutes: 30,
+        elapsedMinutes: 0,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 1)),
       ),
 
       TodoItem(
-        id: 'todo_no_project_2',
+        id: 22,
         title: 'Nettoyer le garage',
         description: 'Ranger et trier les affaires du garage',
         priority: Priority.low,
         projectId: null,
-        estimatedTime: 180,
-        actualTime: 0,
+        estimatedMinutes: 180,
+        elapsedMinutes: 0,
         isCompleted: false,
         createdAt: DateTime.now().subtract(const Duration(days: 3)),
       ),
 
       // TÂCHES TERMINÉES (pour tester l'affichage)
       TodoItem(
-        id: 'todo_completed_1',
+        id: 23,
         title: 'Payer les factures',
         description: 'Régler les factures d\'électricité et d\'internet',
         priority: Priority.high,
-        projectId: 'proj_personal',
+        projectId: 2,
         dueDate: DateTime.now().subtract(const Duration(days: 2)),
-        estimatedTime: 45,
-        actualTime: 30,
+        estimatedMinutes: 45,
+        elapsedMinutes: 30,
         isCompleted: true,
-        completedAt: DateTime.now().subtract(const Duration(days: 1)),
         createdAt: DateTime.now().subtract(const Duration(days: 5)),
       ),
 
       TodoItem(
-        id: 'todo_completed_2',
+        id: 24,
         title: 'Réunion équipe',
         description: 'Point hebdomadaire avec l\'équipe de développement',
         priority: Priority.medium,
-        projectId: 'proj_work',
+        projectId: 1,
         dueDate: DateTime.now().subtract(const Duration(days: 1)),
-        estimatedTime: 60,
-        actualTime: 55,
+        estimatedMinutes: 60,
+        elapsedMinutes: 55,
         isCompleted: true,
-        completedAt: DateTime.now().subtract(const Duration(hours: 6)),
         createdAt: DateTime.now().subtract(const Duration(days: 3)),
       ),
     ];
 
-    // Créer l'objet AppData avec toutes les données
-    final appData = AppData(
-      todos: todos,
-      projects: projects,
-      lastUpdated: DateTime.now(),
-    );
+    // Sauvegarder les projets
+    for (final project in projects) {
+      await localStorageService.addProject(project);
+    }
 
-    // Sauvegarder les données
-    await localStorageService.saveAppData(appData);
+    // Sauvegarder les tâches
+    for (final todo in todos) {
+      await localStorageService.addTodo(todo);
+    }
     
     // Programmer les notifications de test
     await _scheduleTestNotifications(todos);
     
     // Marquer que les données de test ont été générées
-    await localStorageService.saveBool(_testDataKey, true);
+    await _saveBool(_testDataKey, true);
     
     debugPrint('Test data generated successfully!');
     debugPrint('Generated ${todos.length} todos and ${projects.length} projects');
@@ -408,12 +416,12 @@ class TestDataGeneratorService {
     final notificationService = NotificationService();
     
     for (final todo in todos) {
-      if (todo.reminderTime != null && !todo.isCompleted) {
+      if (todo.reminder != null && !todo.isCompleted) {
         await notificationService.scheduleNotification(
           todo.id,
           todo.title,
-          todo.description ?? '',
-          todo.reminderTime!,
+          todo.description,
+          todo.reminder!,
         );
       }
     }
@@ -423,14 +431,23 @@ class TestDataGeneratorService {
 
   /// Supprime les données de test
   static Future<void> clearTestData() async {
-    final localStorageService = LocalStorageService();
-    await localStorageService.saveBool(_testDataKey, false);
+    await _saveBool(_testDataKey, false);
     debugPrint('Test data flag cleared');
   }
 
   /// Vérifie si les données de test sont générées
   static Future<bool> isTestDataGenerated() async {
-    final localStorageService = LocalStorageService();
-    return await localStorageService.getBool(_testDataKey) ?? false;
+    return await _getBool(_testDataKey) ?? false;
+  }
+
+  // Méthodes utilitaires pour SharedPreferences
+  static Future<bool?> _getBool(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(key);
+  }
+
+  static Future<void> _saveBool(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
   }
 } 
