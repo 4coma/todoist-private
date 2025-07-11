@@ -13,6 +13,10 @@ import 'models/todo_item.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Initialiser le service de stockage local
+  final localStorageService = LocalStorageService();
+  await localStorageService.initialize();
+  
   // Initialiser le service de notifications
   await NotificationService.initialize();
   
@@ -172,6 +176,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   SortType _currentSort = SortType.dateAdded;
   bool _isSidebarOpen = false;
   bool _showDescriptions = false;
+  bool _showCompletedTasks = false;
   
   // Variables pour le nouveau système de thèmes
   String _selectedColor = 'blue';
@@ -194,6 +199,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
   @override
   void dispose() {
     _timerService.removeListener(_onTimerTick);
+    // Sauvegarder les données avant de fermer l'app
+    _saveData();
     super.dispose();
   }
 
@@ -312,12 +319,18 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Méthode pour sauvegarder les données
   Future<void> _saveData() async {
     try {
+      debugPrint('🔄 _saveData(): Début de la sauvegarde...');
+      debugPrint('🔄 _saveData(): ${_projects.length} projets à sauvegarder');
+      debugPrint('🔄 _saveData(): ${_todos.length} tâches à sauvegarder');
+      
       final localStorageService = LocalStorageService();
       await localStorageService.updateAllProjects(_projects);
       await localStorageService.updateAllTodos(_todos);
-      debugPrint('✅ Données sauvegardées: ${_projects.length} projets, ${_todos.length} tâches');
+      
+      debugPrint('✅ _saveData(): Données sauvegardées avec succès');
+      debugPrint('✅ _saveData(): ${_projects.length} projets, ${_todos.length} tâches');
     } catch (e) {
-      debugPrint('❌ Erreur lors de la sauvegarde: $e');
+      debugPrint('❌ _saveData(): Erreur lors de la sauvegarde: $e');
     }
   }
 
@@ -1102,8 +1115,18 @@ class _TodoHomePageState extends State<TodoHomePage> {
   }
 
   List<TodoItem> get _filteredTodos {
-    if (_selectedProject == null) return _todos.where((todo) => todo.isRootTask).toList();
-    var filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && todo.isRootTask).toList();
+    List<TodoItem> filtered;
+    
+    if (_showCompletedTasks) {
+      // Afficher seulement les tâches achevées
+      filtered = _todos.where((todo) => todo.isCompleted && todo.isRootTask).toList();
+    } else if (_selectedProject == null) {
+      // Afficher toutes les tâches non achevées
+      filtered = _todos.where((todo) => !todo.isCompleted && todo.isRootTask).toList();
+    } else {
+      // Afficher les tâches du projet sélectionné (non achevées)
+      filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && !todo.isCompleted && todo.isRootTask).toList();
+    }
     
     // Appliquer le tri
     switch (_currentSort) {
@@ -1142,11 +1165,21 @@ class _TodoHomePageState extends State<TodoHomePage> {
     }
   }
 
+  String _getAppBarTitle() {
+    if (_showCompletedTasks) {
+      return 'Tâches achevées';
+    } else if (_selectedProject == null) {
+      return 'Toutes les tâches';
+    } else {
+      return _selectedProject!.name;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_selectedProject?.name ?? 'Toutes les tâches'),
+        title: Text(_getAppBarTitle()),
         automaticallyImplyLeading: true,
       ),
       drawer: Drawer(
@@ -1178,10 +1211,22 @@ class _TodoHomePageState extends State<TodoHomePage> {
             ListTile(
               leading: Icon(Icons.list),
               title: Text('Toutes les tâches'),
-              selected: _selectedProject == null,
+              selected: _selectedProject == null && !_showCompletedTasks,
               onTap: () {
                 setState(() {
                   _selectedProject = null;
+                  _showCompletedTasks = false;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.check_circle),
+              title: Text('Tâches achevées'),
+              selected: _showCompletedTasks,
+              onTap: () {
+                setState(() {
+                  _showCompletedTasks = true;
                 });
                 Navigator.pop(context);
               },
@@ -1619,31 +1664,43 @@ class _AddTodoModalState extends State<AddTodoModal> {
               ),
               const SizedBox(height: 16),
               // Projet
-              DropdownButtonFormField<Project>(
+              DropdownButtonFormField<Project?>(
                 value: _selectedProject,
                 decoration: const InputDecoration(
-                  labelText: 'Projet',
+                  labelText: 'Projet (optionnel)',
                   border: OutlineInputBorder(),
                 ),
-                items: widget.projects.map((project) {
-                  return DropdownMenuItem(
-                    value: project,
+                items: [
+                  const DropdownMenuItem<Project?>(
+                    value: null,
                     child: Row(
                       children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: project.color,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(project.name),
+                        Icon(Icons.folder_off, color: Colors.grey),
+                        SizedBox(width: 8),
+                        Text('Aucun projet'),
                       ],
                     ),
-                  );
-                }).toList(),
+                  ),
+                  ...widget.projects.map((project) {
+                    return DropdownMenuItem<Project?>(
+                      value: project,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: project.color,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(project.name),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
                 onChanged: (value) {
                   setState(() {
                     _selectedProject = value;
@@ -1865,54 +1922,48 @@ class _AddTodoModalState extends State<AddTodoModal> {
                   const SizedBox(width: 16),
                   Expanded(
                     child: ElevatedButton(
-                        onPressed: () {
-                          if (_titleController.text.trim().isEmpty || _selectedProject == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
-                            );
-                            return;
-                          }
-                          
-                          // Parser le temps estimé
-                          int? estimatedMinutes;
-                          if (_estimatedTimeController.text.trim().isNotEmpty) {
-                            try {
-                              estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
-                              if (estimatedMinutes <= 0) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
+                        onPressed: _titleController.text.trim().isEmpty
+                            ? null
+                            : () {
+                                // Parser le temps estimé
+                                int? estimatedMinutes;
+                                if (_estimatedTimeController.text.trim().isNotEmpty) {
+                                  try {
+                                    estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+                                    if (estimatedMinutes <= 0) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
+                                      );
+                                      return;
+                                    }
+                                  } catch (e) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
+                                    );
+                                    return;
+                                  }
+                                }
+                                final newTodo = TodoItem(
+                                  id: DateTime.now().millisecondsSinceEpoch,
+                                  title: _titleController.text.trim(),
+                                  description: _descriptionController.text.trim(),
+                                  dueDate: _selectedDate,
+                                  priority: _selectedPriority,
+                                  projectId: _selectedProject?.id,
+                                  isCompleted: false,
+                                  parentId: null, // Tâche racine
+                                  level: 0,
+                                  reminder: _selectedReminder,
+                                  estimatedMinutes: estimatedMinutes,
+                                  elapsedMinutes: 0,
+                                  elapsedSeconds: 0,
                                 );
-                                return;
-                              }
-                            } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
-                              );
-                              return;
-                            }
-                          }
-                          
-                              final newTodo = TodoItem(
-                                id: DateTime.now().millisecondsSinceEpoch,
-                                title: _titleController.text.trim(),
-                                description: _descriptionController.text.trim(),
-                                dueDate: _selectedDate,
-                                priority: _selectedPriority,
-                                projectId: _selectedProject!.id,
-                                isCompleted: false,
-                                parentId: null, // Tâche racine
-                                level: 0,
-                                reminder: _selectedReminder,
-                                estimatedMinutes: estimatedMinutes,
-                                elapsedMinutes: 0,
-                                elapsedSeconds: 0,
-                              );
-                          Navigator.pop(context, {
-                            'todo': newTodo,
-                            'subTasks': _subTasks,
-                          });
-                            },
-                      child: const Text('Ajouter'),
+                                Navigator.pop(context, {
+                                  'todo': newTodo,
+                                  'subTasks': _subTasks,
+                                });
+                              },
+                        child: const Text('Ajouter'),
                     ),
                   ),
                 ],
@@ -2039,31 +2090,43 @@ class _EditTodoModalState extends State<EditTodoModal> {
               const SizedBox(height: 16),
               
               // Projet
-              DropdownButtonFormField<Project>(
+              DropdownButtonFormField<Project?>(
                 value: _selectedProject,
                 decoration: const InputDecoration(
-                  labelText: 'Projet',
+                  labelText: 'Projet (optionnel)',
                   border: OutlineInputBorder(),
                 ),
-                items: widget.projects.map((project) {
-                  return DropdownMenuItem(
-                    value: project,
+                items: [
+                  const DropdownMenuItem<Project?>(
+                    value: null,
                     child: Row(
                       children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: project.color,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(project.name),
+                        Icon(Icons.folder_off, color: Colors.grey),
+                        SizedBox(width: 8),
+                        Text('Aucun projet'),
                       ],
                     ),
-                  );
-                }).toList(),
+                  ),
+                  ...widget.projects.map((project) {
+                    return DropdownMenuItem<Project?>(
+                      value: project,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: project.color,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(project.name),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
                 onChanged: (value) {
                   setState(() {
                     _selectedProject = value;

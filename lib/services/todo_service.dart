@@ -264,7 +264,7 @@ class TodoService {
   // Valider une tâche avant sauvegarde
   bool validateTodo(TodoItem todo) {
     return todo.title.isNotEmpty && 
-           todo.projectId > 0 &&
+           (todo.projectId == null || todo.projectId! > 0) &&
            todo.level >= 0 && 
            todo.level <= 3;
   }

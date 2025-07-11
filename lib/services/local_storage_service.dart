@@ -62,30 +62,40 @@ class LocalStorageService {
 
   Future<void> _loadTodos() async {
     try {
+      debugPrint('🔄 LocalStorageService._loadTodos(): Début du chargement...');
       final prefs = await SharedPreferences.getInstance();
       final todosJson = prefs.getString(_todosKey);
       if (todosJson != null) {
+        debugPrint('🔄 LocalStorageService._loadTodos(): Données trouvées, déchiffrement...');
         final decryptedData = _decryptData(todosJson);
         final List<dynamic> todosList = jsonDecode(decryptedData);
         _todos = todosList.map((map) => TodoItem.fromMap(map)).toList();
-        print('✅ LocalStorageService: ${_todos.length} tâches chargées');
+        debugPrint('✅ LocalStorageService._loadTodos(): ${_todos.length} tâches chargées');
+      } else {
+        debugPrint('ℹ️ LocalStorageService._loadTodos(): Aucune donnée trouvée, liste vide');
+        _todos = [];
       }
     } catch (e) {
-      print('❌ Erreur lors du chargement des tâches: $e');
+      debugPrint('❌ LocalStorageService._loadTodos(): Erreur lors du chargement des tâches: $e');
       _todos = [];
     }
   }
 
   Future<void> _saveTodos() async {
     try {
+      debugPrint('🔄 LocalStorageService._saveTodos(): Début de la sauvegarde...');
+      debugPrint('🔄 LocalStorageService._saveTodos(): ${_todos.length} tâches à sauvegarder');
+      
       final prefs = await SharedPreferences.getInstance();
       final todosJson = _todos.map((todo) => todo.toMap()).toList();
       final jsonString = jsonEncode(todosJson);
       final encryptedData = _encryptData(jsonString);
       await prefs.setString(_todosKey, encryptedData);
-      print('✅ LocalStorageService: ${_todos.length} tâches sauvegardées');
+      
+      debugPrint('✅ LocalStorageService._saveTodos(): ${_todos.length} tâches sauvegardées');
+      debugPrint('✅ LocalStorageService._saveTodos(): Données chiffrées et stockées');
     } catch (e) {
-      print('❌ Erreur lors de la sauvegarde des tâches: $e');
+      debugPrint('❌ LocalStorageService._saveTodos(): Erreur lors de la sauvegarde des tâches: $e');
     }
   }
 

@@ -8,7 +8,7 @@ class TodoItem {
   final String description;
   final DateTime? dueDate;
   final Priority priority;
-  final int projectId;
+  final int? projectId;
   bool isCompleted;
   final int? parentId; // ID de la tâche parente (null pour les tâches racines)
   final int level; // Niveau de profondeur (0 = tâche racine, 1-3 = sous-tâches)
@@ -25,7 +25,7 @@ class TodoItem {
     required this.description,
     this.dueDate,
     required this.priority,
-    required this.projectId,
+    this.projectId,
     required this.isCompleted,
     this.parentId,
     this.level = 0,
@@ -176,7 +176,7 @@ class TodoItem {
         (e) => e.name == json['priority'],
         orElse: () => Priority.medium,
       ),
-      projectId: json['projectId'] as int,
+      projectId: json['projectId'] as int?,
       isCompleted: json['isCompleted'] as bool,
       parentId: json['parentId'] as int?,
       level: json['level'] as int? ?? 0,
