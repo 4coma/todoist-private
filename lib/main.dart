@@ -9,6 +9,7 @@ import 'services/data_export_import_service.dart';
 import 'services/file_service.dart';
 import 'models/project.dart';
 import 'models/todo_item.dart';
+import 'package:awesome_notifications/awesome_notifications.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,7 +24,41 @@ void main() async {
   // Vérifier l'état des permissions
   await NotificationService.checkPermissions();
   
+  // Configurer l'écoute des notifications pour la navigation
+  NotificationService.listenToActionStream(_handleNotificationAction);
+  
   runApp(const TodoApp());
+}
+
+// Variable globale pour accéder à l'état de la page principale
+_TodoHomePageState? _globalHomePageState;
+
+void _handleNotificationAction(ReceivedAction action) {
+  debugPrint('🔔 Notification cliquée: ${action.payload}');
+  
+  // Extraire l'ID de la tâche du payload
+  final taskIdString = action.payload?['taskId'];
+  if (taskIdString != null) {
+    final taskId = int.tryParse(taskIdString);
+    if (taskId != null && _globalHomePageState != null) {
+      debugPrint('🔔 Navigation vers la tâche ID: $taskId');
+      try {
+        _globalHomePageState!._navigateToTask(taskId);
+      } catch (e) {
+        debugPrint('❌ Erreur lors de la navigation vers la tâche $taskId: $e');
+        // Afficher un message d'erreur à l'utilisateur
+        if (_globalHomePageState!.mounted) {
+          ScaffoldMessenger.of(_globalHomePageState!.context).showSnackBar(
+            SnackBar(
+              content: Text('Tâche non trouvée ou supprimée'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    }
+  }
 }
 
 class TodoApp extends StatefulWidget {
@@ -176,7 +211,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
   SortType _currentSort = SortType.dateAdded;
   bool _isSidebarOpen = false;
   bool _showDescriptions = false;
-  bool _showCompletedTasks = false;
+  bool _showCompletedTasks = false; // Mode "Tâches achevées" (sidebar)
+  bool _showCompletedTasksInProjects = false; // Option "Afficher les tâches terminées" (paramètres)
   
   // Variables pour le nouveau système de thèmes
   String _selectedColor = 'blue';
@@ -194,6 +230,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
     _loadData();
     _loadSettings();
     _loadThemePreferences();
+    
+    // Configurer la variable globale pour la navigation depuis les notifications
+    _globalHomePageState = this;
   }
 
   @override
@@ -237,9 +276,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
       // Charger les projets (créer une copie modifiable)
       setState(() {
         _projects = List<Project>.from(localStorageService.projects);
-        if (_projects.isNotEmpty) {
-          _selectedProject = _projects.first;
-        }
+        _selectedProject = null; // Afficher "Toutes les tâches" par défaut
       });
       debugPrint('✅ _loadData(): ${_projects.length} projets chargés');
 
@@ -264,8 +301,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
       final prefs = await SharedPreferences.getInstance();
       setState(() {
         _showDescriptions = prefs.getBool('show_descriptions') ?? false;
+        _showCompletedTasksInProjects = prefs.getBool('show_completed_tasks') ?? false;
       });
-      debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions');
+      debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions, show_completed_tasks_in_projects = $_showCompletedTasksInProjects');
     } catch (e) {
       debugPrint('❌ Erreur lors du chargement des paramètres: $e');
     }
@@ -290,7 +328,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('show_descriptions', _showDescriptions);
-      debugPrint('✅ Paramètres sauvegardés: show_descriptions = $_showDescriptions');
+      await prefs.setBool('show_completed_tasks', _showCompletedTasksInProjects);
+      debugPrint('✅ Paramètres sauvegardés: show_descriptions = $_showDescriptions, show_completed_tasks_in_projects = $_showCompletedTasksInProjects');
     } catch (e) {
       debugPrint('❌ Erreur lors de la sauvegarde des paramètres: $e');
     }
@@ -425,6 +464,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
           // Fonction récursive pour ouvrir le modal d'édition de n'importe quelle tâche
           _openEditModal(subTask);
         },
+        homeState: this,
       ),
     ).then((result) async {
       if (result != null && result['todo'] != null) {
@@ -453,6 +493,28 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   void _editTodo(TodoItem todo) {
     _openEditModal(todo);
+  }
+
+  /// Navigue vers une tâche spécifique depuis une notification
+  void _navigateToTask(int taskId) {
+    debugPrint('🔔 Navigation vers la tâche ID: $taskId');
+    
+    // Trouver la tâche par son ID
+    final task = _todos.firstWhere(
+      (todo) => todo.id == taskId,
+      orElse: () => throw Exception('Tâche non trouvée: $taskId'),
+    );
+    
+    // Ouvrir le modal d'édition de la tâche
+    _openEditModal(task);
+    
+    // Optionnel: Afficher un message de confirmation
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Ouverture de la tâche: ${task.title}'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _addProject() {
@@ -1118,14 +1180,14 @@ class _TodoHomePageState extends State<TodoHomePage> {
     List<TodoItem> filtered;
     
     if (_showCompletedTasks) {
-      // Afficher seulement les tâches achevées
+      // Mode "Tâches achevées" - afficher seulement les tâches terminées
       filtered = _todos.where((todo) => todo.isCompleted && todo.isRootTask).toList();
     } else if (_selectedProject == null) {
-      // Afficher toutes les tâches non achevées
-      filtered = _todos.where((todo) => !todo.isCompleted && todo.isRootTask).toList();
+      // Vue "Toutes les tâches" - afficher les tâches non terminées (ou toutes si l'option est activée)
+      filtered = _todos.where((todo) => (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
     } else {
-      // Afficher les tâches du projet sélectionné (non achevées)
-      filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && !todo.isCompleted && todo.isRootTask).toList();
+      // Vue projet spécifique - afficher les tâches du projet (non terminées ou toutes si l'option est activée)
+      filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
     }
     
     // Appliquer le tri
@@ -1242,7 +1304,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
                 ),
               ),
               title: Text(project.name),
-              subtitle: Text('${_todos.where((todo) => todo.projectId == project.id).length} tâches'),
+              subtitle: Text('${_todos.where((todo) => todo.projectId == project.id && !todo.isCompleted).length} tâches'),
               selected: _selectedProject?.id == project.id,
               onTap: () {
                 setState(() {
@@ -1992,6 +2054,7 @@ class EditTodoModal extends StatefulWidget {
   final Function(int) onToggleSubTask;
   final Function(int) onDeleteTodo; // Callback pour supprimer une tâche
   final Function(TodoItem)? onEditSubTask; // Callback pour éditer une sous-tâche
+  final _TodoHomePageState homeState; // Référence directe au homeState
   
   const EditTodoModal({
     super.key, 
@@ -2002,6 +2065,7 @@ class EditTodoModal extends StatefulWidget {
     required this.onToggleSubTask,
     required this.onDeleteTodo,
     this.onEditSubTask,
+    required this.homeState,
   });
 
   @override
@@ -2371,6 +2435,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                                         // Appeler la même fonction récursive
                                         homeState._openEditModal(nestedSubTask);
                                       },
+                                      homeState: homeState,
                                     ),
                                   );
                                   debugPrint('🟢 [EditTodoModal] Modal ouvert pour sous-tâche');
@@ -2513,8 +2578,60 @@ class _EditTodoModalState extends State<EditTodoModal> {
                   ),
                 ],
                 ),
-                const SizedBox(height: 24),
-                // Bouton de suppression
+                // Bouton "Marquer comme terminée"
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.check_circle),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.green,
+                    side: const BorderSide(color: Colors.green),
+                  ),
+                  onPressed: () {
+                    debugPrint('🔵 [EditTodoModal] Bouton "Marquer comme terminée" cliqué');
+                    debugPrint('🔵 [EditTodoModal] ID de la tâche: ${widget.todo.id}');
+                    debugPrint('🔵 [EditTodoModal] État actuel isCompleted: ${widget.todo.isCompleted}');
+                    
+                    debugPrint('🔵 [EditTodoModal] Début de la marque comme terminée');
+                    
+                    // Marquer la tâche et toutes ses sous-tâches comme terminées
+                    void markCompleted(int id) {
+                      debugPrint('🔵 [EditTodoModal] markCompleted appelé pour ID: $id');
+                      final index = widget.homeState._todos.indexWhere((t) => t.id == id);
+                      debugPrint('🔵 [EditTodoModal] Index trouvé: $index');
+                      
+                      if (index != -1) {
+                        debugPrint('🔵 [EditTodoModal] Ancien état isCompleted: ${widget.homeState._todos[index].isCompleted}');
+                        widget.homeState._todos[index].isCompleted = true;
+                        debugPrint('🔵 [EditTodoModal] Nouvel état isCompleted: ${widget.homeState._todos[index].isCompleted}');
+                      } else {
+                        debugPrint('❌ [EditTodoModal] Tâche non trouvée dans la liste');
+                      }
+                      
+                      final subTasks = widget.homeState._getSubTasks(id);
+                      debugPrint('🔵 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
+                      for (final sub in subTasks) {
+                        debugPrint('🔵 [EditTodoModal] Marquer sous-tâche: ${sub.id}');
+                        markCompleted(sub.id);
+                      }
+                    }
+                    
+                    markCompleted(widget.todo.id);
+                    debugPrint('🔵 [EditTodoModal] Sauvegarde des données...');
+                    widget.homeState._saveData();
+                    debugPrint('🔵 [EditTodoModal] Rafraîchissement de l\'interface...');
+                    widget.homeState.setState(() {}); // Rafraîchir l'interface
+                    debugPrint('🔵 [EditTodoModal] Affichage du SnackBar...');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Tâche et sous-tâches marquées comme terminées')),
+                    );
+                    debugPrint('🔵 [EditTodoModal] Fermeture de la modale...');
+                    Navigator.pop(context); // Fermer la modale
+                    debugPrint('🔵 [EditTodoModal] Modale fermée');
+                  },
+                  label: const Text('Marquer comme terminée'),
+                ),
+                const SizedBox(height: 16),
+                // Bouton de suppression (tout en bas)
                 OutlinedButton.icon(
                   onPressed: () {
                     showDialog(
@@ -2529,8 +2646,10 @@ class _EditTodoModalState extends State<EditTodoModal> {
                           ),
                           TextButton(
                             onPressed: () {
-                              debugPrint('🗑️ Bouton suppression cliqué pour la tâche ${widget.todo.id}');
-                              widget.onDeleteTodo(widget.todo.id);
+                              final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
+                              if (homeState != null) {
+                                homeState._deleteTodo(widget.todo.id);
+                              }
                               Navigator.pop(context); // Fermer la boîte de dialogue
                               Navigator.pop(context); // Fermer la modale d'édition
                             },
@@ -2710,6 +2829,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _showDescriptions = false;
+  bool _showCompletedTasksInProjects = false;
   String _selectedColor = 'blue';
   bool _isDarkMode = false;
 
@@ -2724,7 +2844,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _showDescriptions = prefs.getBool('show_descriptions') ?? false;
+      _showCompletedTasksInProjects = prefs.getBool('show_completed_tasks') ?? false;
     });
+    debugPrint('📋 [SettingsScreen] Préférences chargées: show_descriptions = $_showDescriptions, show_completed_tasks = $_showCompletedTasksInProjects');
   }
 
   Future<void> _loadThemePreferences() async {
@@ -2741,6 +2863,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _showDescriptions = value;
     });
+    widget.onSettingsChanged();
+  }
+
+  Future<void> _saveShowCompletedTasks(bool value) async {
+    debugPrint('🔧 [SettingsScreen] Sauvegarde show_completed_tasks: $value');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_completed_tasks', value);
+    setState(() {
+      _showCompletedTasksInProjects = value;
+    });
+    debugPrint('✅ [SettingsScreen] Préférence sauvegardée: show_completed_tasks = $value');
     widget.onSettingsChanged();
   }
 
@@ -2895,6 +3028,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         subtitle: Text('Afficher les descriptions des tâches dans la liste principale'),
                         value: _showDescriptions,
                         onChanged: _saveShowDescriptions,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        title: Text('Afficher les tâches terminées'),
+                        subtitle: Text('Afficher les tâches terminées dans tous les projets'),
+                        value: _showCompletedTasksInProjects,
+                        onChanged: _saveShowCompletedTasks,
                         contentPadding: EdgeInsets.zero,
                       ),
                     ],

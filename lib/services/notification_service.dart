@@ -34,15 +34,19 @@ class NotificationService {
     return await AwesomeNotifications().requestPermissionToSendNotifications();
   }
 
-  /// Programme une notification à une date/heure spécifique
+  /// Programme une notification à une date/heure spécifique avec données de navigation
   static Future<void> scheduleReminder({
     required int id,           // ID unique de la notification
     required String title,     // Titre de la notification
     required String body,      // Contenu de la notification
     required DateTime scheduledDate, // Date/heure de déclenchement
+    Map<String, String>? payload, // Données supplémentaires (optionnel)
   }) async {
     debugPrint('🔍 === PROGRAMMATION RAPPEL AVEC AWESOME_NOTIFICATIONS ===');
     debugPrint('🔍 ID: $id, Titre: $title, Date: $scheduledDate');
+    if (payload != null) {
+      debugPrint('🔍 Payload: $payload');
+    }
     
     await AwesomeNotifications().createNotification(
       content: NotificationContent(
@@ -52,6 +56,7 @@ class NotificationService {
         body: body,
         notificationLayout: NotificationLayout.Default,
         category: NotificationCategory.Reminder,
+        payload: payload, // Inclure les données de navigation
       ),
       schedule: NotificationCalendar.fromDate(
         date: scheduledDate,
@@ -106,11 +111,15 @@ class NotificationService {
     // Générer un ID valide pour la notification basé sur l'ID de la tâche
     final int notificationId = _generateNotificationId(taskId);
     
+    // Inclure l'ID de la tâche dans le payload pour la navigation
+    final payload = {'taskId': taskId.toString()};
+    
     await scheduleReminder(
       id: notificationId,
       title: title,
       body: body,
       scheduledDate: scheduledDate,
+      payload: payload,
     );
   }
 
