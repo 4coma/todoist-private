@@ -110,6 +110,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 4,
         title: 'Graphique des ventes mensuelles',
+        description: 'Créer le graphique des ventes par mois',
         priority: Priority.low,
         projectId: 1,
         estimatedMinutes: 20,
@@ -123,6 +124,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 5,
         title: 'Comparaison avec l\'année précédente',
+        description: 'Analyser les données de l\'année précédente',
         priority: Priority.low,
         projectId: 1,
         estimatedMinutes: 25,
@@ -179,6 +181,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 9,
         title: 'Rechercher les destinations',
+        description: 'Explorer les options de voyage disponibles',
         priority: Priority.medium,
         projectId: 2,
         estimatedMinutes: 120,
@@ -192,6 +195,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 10,
         title: 'Réserver les billets d\'avion',
+        description: 'Acheter les billets pour les vacances',
         priority: Priority.high,
         projectId: 2,
         estimatedMinutes: 60,
@@ -232,6 +236,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 13,
         title: 'Fruits et légumes',
+        description: 'Acheter les fruits et légumes de la semaine',
         priority: Priority.medium,
         projectId: 3,
         estimatedMinutes: 20,
@@ -245,6 +250,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 14,
         title: 'Viandes et poissons',
+        description: 'Acheter les viandes et poissons frais',
         priority: Priority.medium,
         projectId: 3,
         estimatedMinutes: 25,
@@ -258,6 +264,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 15,
         title: 'Produits d\'entretien',
+        description: 'Acheter les produits ménagers',
         priority: Priority.low,
         projectId: 3,
         estimatedMinutes: 15,
@@ -313,6 +320,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 19,
         title: 'Lire la documentation officielle',
+        description: 'Étudier la documentation Flutter et Dart',
         priority: Priority.medium,
         projectId: 5,
         estimatedMinutes: 120,
@@ -326,6 +334,7 @@ class TestDataGeneratorService {
       TodoItem(
         id: 20,
         title: 'Pratiquer avec des projets',
+        description: 'Créer des projets pour s\'exercer',
         priority: Priority.high,
         projectId: 5,
         estimatedMinutes: 180,
@@ -413,15 +422,13 @@ class TestDataGeneratorService {
 
   /// Programme les notifications de test
   static Future<void> _scheduleTestNotifications(List<TodoItem> todos) async {
-    final notificationService = NotificationService();
-    
     for (final todo in todos) {
       if (todo.reminder != null && !todo.isCompleted) {
-        await notificationService.scheduleNotification(
-          todo.id,
-          todo.title,
-          todo.description,
-          todo.reminder!,
+        await NotificationService.scheduleTaskReminder(
+          taskId: todo.id,
+          title: todo.title,
+          body: todo.description,
+          scheduledDate: todo.reminder!,
         );
       }
     }
