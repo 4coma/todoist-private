@@ -1,4 +1,4 @@
-# 📝 Todo App - Application de Gestion de Tâches Flutter
+# Todo App - Application de Gestion de Tâches Flutter
 
 Une application de gestion de tâches moderne et intuitive développée avec Flutter, offrant une expérience utilisateur fluide avec des fonctionnalités avancées.
 
@@ -6,62 +6,61 @@ Une application de gestion de tâches moderne et intuitive développée avec Flu
 ![Dart](https://img.shields.io/badge/Dart-3.5.4-blue?style=for-the-badge&logo=dart)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-## ✨ Fonctionnalités Principales
+## Fonctionnalités principales
 
-### 🎯 Gestion des Tâches
+### Gestion des tâches
 - **Création et édition** de tâches avec descriptions détaillées
-- **Sous-tâches hiérarchiques** (jusqu'à 3 niveaux de profondeur)
+- **Sous-tâches hiérarchiques**
 - **Priorités** : Basse, Moyenne, Haute
 - **Dates d'échéance** et rappels personnalisables
 - **Marquage rapide** des tâches comme terminées (avec sous-tâches)
 
-### 📁 Organisation par Projets
+### Organisation par projets
 - **Projets personnalisables** avec couleurs uniques
 - **Vue "Toutes les tâches"** pour une vue d'ensemble
-- **Comptage intelligent** des tâches non terminées par projet
 - **Gestion des projets** (ajout, suppression, modification)
 
-### ⏰ Suivi du Temps
+### Suivi du temps
 - **Timer intégré** pour chaque tâche
 - **Temps estimé** vs temps réel
 - **Suivi en temps réel** avec pause/reprise
 - **Statistiques** de temps par tâche
 
-### 🔔 Notifications Intelligentes
+### Notifications intelligentes
 - **Rappels programmables** pour chaque tâche
 - **Navigation directe** vers la tâche depuis la notification
 - **Notifications persistantes** même en mode économie d'énergie
 - **Gestion des permissions** automatique
 
-### 🎨 Interface Moderne
+### Interface moderne
 - **Thèmes personnalisables** : 8 couleurs disponibles
 - **Mode sombre/clair** indépendant
 - **Animations fluides** et transitions modernes
 - **Design responsive** adapté à tous les écrans
 
-### ⚙️ Paramètres Avancés
+### Paramètres avancés
 - **Affichage des descriptions** (optionnel)
 - **Affichage des tâches terminées** (optionnel)
 - **Tri personnalisable** : Date, Nom, Priorité, Échéance
 - **Sauvegarde automatique** des préférences
 
-### 💾 Gestion des Données
+### Gestion des données
 - **Sauvegarde locale** sécurisée avec chiffrement
 - **Export/Import** des données (JSON)
 - **Migration automatique** des anciennes données
 - **Synchronisation** des préférences utilisateur
 
-## 📱 Captures d'Écran
+## Captures d'écran
 
-### Écran Principal
+### Écran principal
 ![Écran Principal](screenshots/main_screen.png)
 *Interface principale avec liste des tâches et sidebar des projets*
 
-### Gestion des Tâches
+### Gestion des tâches
 ![Gestion des Tâches](screenshots/task_management.png)
 *Modal de création/édition de tâche avec sous-tâches*
 
-### Paramètres et Thèmes
+### Paramètres et thèmes
 ![Paramètres](screenshots/settings.png)
 *Écran des paramètres avec sélection de thème*
 
@@ -69,7 +68,7 @@ Une application de gestion de tâches moderne et intuitive développée avec Flu
 ![Notifications](screenshots/notifications.png)
 *Système de notifications avec navigation directe*
 
-## 🚀 Installation
+## Installation
 
 ### Prérequis
 - Flutter SDK 3.5.4 ou supérieur
@@ -77,7 +76,7 @@ Une application de gestion de tâches moderne et intuitive développée avec Flu
 - Android Studio / VS Code
 - Un appareil Android ou émulateur
 
-### Étapes d'Installation
+### Étapes d'installation
 
 1. **Cloner le repository**
 ```bash
@@ -101,7 +100,7 @@ flutter pub run flutter_launcher_icons:main
 flutter run
 ```
 
-### Build pour Production
+### Build pour production
 
 **Android APK :**
 ```bash
@@ -113,9 +112,9 @@ flutter build apk --release
 flutter build appbundle --release
 ```
 
-## 🛠️ Architecture Technique
+## Architecture Technique
 
-### Structure du Projet
+### Structure du projet
 ```
 lib/
 ├── main.dart                 # Point d'entrée de l'application
@@ -132,23 +131,23 @@ lib/
     └── modern_components.dart
 ```
 
-### Technologies Utilisées
+### Technologies utilisées
 - **Flutter** : Framework de développement cross-platform
 - **SharedPreferences** : Stockage local des préférences
 - **Awesome Notifications** : Système de notifications avancé
 - **Flutter Animate** : Animations fluides et modernes
 - **File Picker** : Gestion des fichiers pour export/import
 
-### Fonctionnalités Techniques
+### Fonctionnalités techniques
 - **Architecture modulaire** avec séparation des responsabilités
 - **Gestion d'état** avec StatefulWidget et setState
 - **Stockage sécurisé** avec chiffrement des données
 - **Notifications persistantes** avec gestion des permissions
 - **Timer en temps réel** avec mise à jour de l'interface
 
-## 📋 Fonctionnalités Détaillées
+## Fonctionnalités détaillées
 
-### Gestion des Tâches
+### Gestion des tâches
 - ✅ Création de tâches avec titre, description, priorité
 - ✅ Sous-tâches hiérarchiques (3 niveaux max)
 - ✅ Dates d'échéance avec rappels
@@ -156,13 +155,13 @@ lib/
 - ✅ Suppression avec confirmation
 - ✅ Édition complète des propriétés
 
-### Système de Projets
+### Système de projets
 - ✅ Création de projets avec couleurs personnalisées
 - ✅ Vue "Toutes les tâches" pour vue d'ensemble
 - ✅ Comptage des tâches non terminées
 - ✅ Gestion des projets (ajout, suppression)
 
-### Suivi du Temps
+### Suivi du temps
 - ✅ Timer intégré par tâche
 - ✅ Temps estimé vs temps réel
 - ✅ Pause/reprise du timer
@@ -181,9 +180,9 @@ lib/
 - ✅ Animations fluides
 - ✅ Paramètres d'affichage
 
-## 🔧 Configuration
+## Configuration
 
-### Variables d'Environnement
+### Variables d'environnement
 Aucune variable d'environnement requise - l'application fonctionne entièrement en local.
 
 ### Permissions Android
@@ -201,14 +200,14 @@ Aucune variable d'environnement requise - l'application fonctionne entièrement 
 </array>
 ```
 
-## 📊 Statistiques du Projet
+## Statistiques du projet
 
 - **Lignes de code** : ~3,500+
 - **Fichiers** : 50+
 - **Dépendances** : 15+
 - **Tests** : Couverture complète des fonctionnalités principales
 
-## 🤝 Contribution
+## Contribution
 
 Les contributions sont les bienvenues ! Voici comment contribuer :
 
@@ -218,24 +217,24 @@ Les contributions sont les bienvenues ! Voici comment contribuer :
 4. **Push** vers la branche
 5. **Ouvrir** une Pull Request
 
-### Guidelines de Code
+### Guidelines de code
 - Respecter les conventions Dart/Flutter
 - Ajouter des commentaires pour les fonctionnalités complexes
 - Tester les nouvelles fonctionnalités
 - Maintenir la cohérence du design
 
-## 📄 Licence
+## Licence
 
 Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
 
-## 🙏 Remerciements
+## Remerciements
 
 - **Flutter Team** pour le framework exceptionnel
 - **Awesome Notifications** pour le système de notifications
 - **Flutter Animate** pour les animations fluides
 - **Communauté Flutter** pour l'inspiration et le support
 
-## 📞 Support
+## Support
 
 Pour toute question ou problème :
 - 📧 Email : [votre-email@example.com]

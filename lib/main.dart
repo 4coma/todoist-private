@@ -10,6 +10,7 @@ import 'services/file_service.dart';
 import 'models/project.dart';
 import 'models/todo_item.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
+import 'services/test_data_generator_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -3286,10 +3287,141 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 }
                               },
                               icon: const Icon(Icons.delete_forever, color: Colors.red),
-                              label: const Text('Supprimer toutes les données'),
+                              label: const Text(
+                                'Supprimer toutes les données',
+                                style: TextStyle(color: Colors.red),
+                              ),
                               style: OutlinedButton.styleFrom(
                                 side: const BorderSide(color: Colors.red, width: 2),
                                 padding: const EdgeInsets.symmetric(vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                
+                // Section Données de Test
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.science,
+                            color: Theme.of(context).colorScheme.primary,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Données de test',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Générer des données de test complètes pour les captures d\'écran',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                try {
+                                  showDialog(
+                                    context: context,
+                                    barrierDismissible: false,
+                                    builder: (context) => const Center(child: CircularProgressIndicator()),
+                                  );
+                                  await TestDataGeneratorService.generateTestData();
+                                  Navigator.of(context).pop();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Données de test générées avec succès !'),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                  widget.onSettingsChanged();
+                                } catch (e) {
+                                  if (Navigator.canPop(context)) Navigator.of(context).pop();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Erreur lors de la génération: $e'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.add_circle),
+                              label: const Text('Générer données de test'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Supprimer les données de test'),
+                                    content: const Text('Voulez-vous supprimer le flag des données de test ?'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.of(context).pop(false),
+                                        child: const Text('Annuler'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.of(context).pop(true),
+                                        child: const Text('Supprimer'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed == true) {
+                                  await TestDataGeneratorService.clearTestData();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Flag des données de test supprimé'),
+                                      backgroundColor: Colors.orange,
+                                    ),
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.clear, color: Colors.orange),
+                              label: const Text(
+                                'Supprimer flag',
+                                style: TextStyle(color: Colors.orange),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.orange, width: 1),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
                               ),
                             ),
                           ),
