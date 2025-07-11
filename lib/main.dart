@@ -168,6 +168,7 @@ class _TodoAppState extends State<TodoApp> {
     return MaterialApp(
       title: 'Todo App',
       theme: _currentTheme,
+      debugShowCheckedModeBanner: false, // Enlève le banner DEBUG
       home: TodoHomePage(
         onThemeChanged: _changeTheme,
         onThemeChangedLegacy: _changeThemeLegacy,
