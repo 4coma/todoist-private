@@ -6,11 +6,11 @@ Une application de gestion de tâches intuitive, offrant une expérience utilisa
 ![Dart](https://img.shields.io/badge/Dart-3.5.4-blue?style=for-the-badge&logo=dart)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-## Fonctionnalités détaillées
+## Fonctionnalités
 
 ### Gestion des tâches
 - ✅ Création de tâches avec titre, description, priorité
-- ✅ Sous-tâches hiérarchiques (3 niveaux max)
+- ✅ Sous-tâches infinies
 - ✅ Dates d'échéance avec rappels
 - ✅ Marquage rapide comme terminée
 - ✅ Suppression avec confirmation
@@ -20,20 +20,18 @@ Une application de gestion de tâches intuitive, offrant une expérience utilisa
 - ✅ Création de projets avec couleurs personnalisées
 - ✅ Vue "Toutes les tâches" pour vue d'ensemble
 - ✅ Comptage des tâches non terminées
-- ✅ Gestion des projets (ajout, suppression)
+- ✅ Gestion des projets (ajout, suppression, modification)
 
 ### Suivi du temps
-- ✅ Timer intégré par tâche
+- ✅ Timer intégré par tâche et sous-tâches
 - ✅ Temps estimé vs temps réel
 - ✅ Pause/reprise du timer
 - ✅ Affichage en temps réel
-- ✅ Statistiques de temps
 
 ### Notifications
 - ✅ Rappels programmables
 - ✅ Navigation directe depuis notification
 - ✅ Gestion des permissions
-- ✅ Notifications persistantes
 
 ### Personnalisation
 - ✅ 8 thèmes de couleurs disponibles

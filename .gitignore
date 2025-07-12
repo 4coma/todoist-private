@@ -88,9 +88,9 @@ coverage/
 # FVM
 .fvm/
 
-# Screenshots (keep placeholder files)
-screenshots/*.png
-!screenshots/placeholder.png
+# Screenshots (allow all screenshots)
+# screenshots/*.png
+# !screenshots/placeholder.png
 
 # Environment files
 .env
