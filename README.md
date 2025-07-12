@@ -1,6 +1,6 @@
 # Todo App - Application de gestion et suivi des tâches
 
-Une application de gestion de tâches intuitive, offrant une expérience utilisateur fluide avec des fonctionnalités de suivi du temps pasés sur chaque tâche, rappels, etc.
+Une application de gestion de tâches intuitive, offrant une expérience utilisateur fluide avec des fonctionnalités de suivi du temps pasés sur chaque tâche, rappels, etc. qui vise à fournir une alternative à todoist plus respectueuse de la vie privée.
 
 ![Flutter](https://img.shields.io/badge/Flutter-3.5.4-blue?style=for-the-badge&logo=flutter)
 ![Dart](https://img.shields.io/badge/Dart-3.5.4-blue?style=for-the-badge&logo=dart)
@@ -38,6 +38,11 @@ Une application de gestion de tâches intuitive, offrant une expérience utilisa
 - ✅ Mode sombre/clair
 - ✅ Animations fluides
 - ✅ Paramètres d'affichage
+
+## Fonctionnalités à venir
+
+#### Version WEB
+#### Synchronisation et sauvegarde des données via firebase ou supabase
 
 ## Captures d'écran
 
