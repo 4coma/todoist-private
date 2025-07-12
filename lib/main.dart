@@ -22,6 +22,14 @@ void main() async {
   // Initialiser le service de notifications
   await NotificationService.initialize();
   
+  // Demander les permissions de notification explicitement
+  try {
+    final hasPermission = await NotificationService.requestPermission();
+    debugPrint('🔍 Permissions demandées: $hasPermission');
+  } catch (e) {
+    debugPrint('❌ Erreur lors de la demande de permissions: $e');
+  }
+  
   // Vérifier l'état des permissions
   await NotificationService.checkPermissions();
   
@@ -335,20 +343,34 @@ class _TodoHomePageState extends State<TodoHomePage> {
   // Reprogrammer les notifications pour toutes les tâches avec rappel
   Future<void> _rescheduleNotifications() async {
     try {
+      debugPrint('🔄 _rescheduleNotifications(): Début de la reprogrammation...');
+      
+      // Annuler toutes les notifications existantes
+      await NotificationService.cancelAllReminders();
+      debugPrint('🔄 _rescheduleNotifications(): Anciennes notifications annulées');
+      
+      // Reprogrammer les notifications pour les tâches avec rappel
+      int scheduledCount = 0;
       for (final todo in _todos) {
-        if (todo.reminder != null && todo.reminder!.isAfter(DateTime.now())) {
-          await NotificationService.scheduleTaskReminder(
-            taskId: todo.id,
-            title: todo.title,
-            body: todo.description.isNotEmpty ? todo.description : 'Rappel de tâche',
-            scheduledDate: todo.reminder!,
-          );
+        if (todo.reminder != null && todo.reminder!.isAfter(DateTime.now()) && !todo.isCompleted) {
+          try {
+            await NotificationService.scheduleTaskReminder(
+              taskId: todo.id,
+              title: todo.title,
+              body: todo.description.isNotEmpty ? todo.description : 'Rappel de tâche',
+              scheduledDate: todo.reminder!,
+            );
+            scheduledCount++;
+            debugPrint('🔄 _rescheduleNotifications(): Notification programmée pour "${todo.title}" à ${todo.reminder}');
+          } catch (e) {
+            debugPrint('❌ _rescheduleNotifications(): Erreur pour la tâche ${todo.id}: $e');
+          }
         }
       }
       
-      debugPrint('✅ Rappels reprogrammés pour ${_todos.where((t) => t.reminder != null && t.reminder!.isAfter(DateTime.now())).length} tâches');
+      debugPrint('✅ _rescheduleNotifications(): $scheduledCount notifications reprogrammées avec succès');
     } catch (e) {
-      debugPrint('❌ Erreur lors de la reprogrammation des rappels: $e');
+      debugPrint('❌ _rescheduleNotifications(): Erreur lors de la reprogrammation des rappels: $e');
     }
   }
 
@@ -363,10 +385,35 @@ class _TodoHomePageState extends State<TodoHomePage> {
       await localStorageService.updateAllProjects(_projects);
       await localStorageService.updateAllTodos(_todos);
       
+      // Recharger les données depuis le service pour s'assurer de la cohérence
+      setState(() {
+        _projects = List<Project>.from(localStorageService.projects);
+        _todos = List<TodoItem>.from(localStorageService.todos);
+      });
+      
+      // Forcer le rafraîchissement de la sidebar
+      _refreshSidebarCounts();
+      
       debugPrint('✅ _saveData(): Données sauvegardées avec succès');
       debugPrint('✅ _saveData(): ${_projects.length} projets, ${_todos.length} tâches');
     } catch (e) {
       debugPrint('❌ _saveData(): Erreur lors de la sauvegarde: $e');
+    }
+  }
+
+  // Méthode pour rafraîchir les compteurs de la sidebar
+  void _refreshSidebarCounts() {
+    debugPrint('🔄 _refreshSidebarCounts(): Rafraîchissement des compteurs de la sidebar');
+    
+    // Forcer un setState pour rafraîchir la sidebar
+    setState(() {
+      debugPrint('🔄 _refreshSidebarCounts(): setState() appelé');
+    });
+    
+    // Log des compteurs pour chaque projet
+    for (final project in _projects) {
+      final taskCount = _todos.where((todo) => todo.projectId == project.id && !todo.isCompleted).length;
+      debugPrint('🔄 _refreshSidebarCounts(): Projet "${project.name}": $taskCount tâches');
     }
   }
 
@@ -433,6 +480,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   void _openEditModal(TodoItem todo) {
     debugPrint('🟢 [_openEditModal] Ouverture du modal pour: ${todo.title} (niveau ${todo.level})');
     final subTasks = _getSubTasks(todo.id);
+    debugPrint('🟢 [_openEditModal] Sous-tâches trouvées: ${subTasks.length}');
     
     showModalBottomSheet(
       context: context,
@@ -442,33 +490,43 @@ class _TodoHomePageState extends State<TodoHomePage> {
         projects: _projects,
         subTasks: subTasks,
         onAddSubTask: (subTask) {
+          debugPrint('🟢 [_openEditModal] onAddSubTask appelé pour: ${subTask.title}');
           setState(() {
             _todos.add(subTask);
           });
+          debugPrint('🟢 [_openEditModal] Sous-tâche ajoutée à la liste principale');
         },
         onToggleSubTask: (id) {
+          debugPrint('🟢 [_openEditModal] onToggleSubTask appelé pour ID: $id');
           setState(() {
             final index = _todos.indexWhere((t) => t.id == id);
             if (index != -1) {
               _todos[index].isCompleted = !_todos[index].isCompleted;
+              debugPrint('🟢 [_openEditModal] État de la tâche $id changé: ${_todos[index].isCompleted}');
             }
           });
         },
         onDeleteTodo: (id) {
+          debugPrint('🟢 [_openEditModal] onDeleteTodo appelé pour ID: $id');
           _deleteTodo(id);
         },
         onEditSubTask: (subTask) {
+          debugPrint('🟢 [_openEditModal] onEditSubTask appelé pour: ${subTask.title}');
           // Fonction récursive pour ouvrir le modal d'édition de n'importe quelle tâche
           _openEditModal(subTask);
         },
         homeState: this,
       ),
     ).then((result) async {
+      debugPrint('🟢 [_openEditModal] Modal fermé, résultat: ${result != null ? 'avec données' : 'sans données'}');
+      
       if (result != null && result['todo'] != null) {
+        debugPrint('🟢 [_openEditModal] Mise à jour de la tâche principale...');
         setState(() {
           final index = _todos.indexWhere((t) => t.id == todo.id);
           if (index != -1) {
             _todos[index] = result['todo'] as TodoItem;
+            debugPrint('🟢 [_openEditModal] Tâche principale mise à jour');
           }
         });
         
@@ -485,6 +543,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
           );
         }
       }
+      
+      debugPrint('🟢 [_openEditModal] Traitement terminé');
     });
   }
 
@@ -1406,24 +1466,28 @@ class _TodoHomePageState extends State<TodoHomePage> {
               },
             ),
             Divider(),
-            ..._projects.map((project) => ListTile(
-              leading: Container(
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: project.color,
-                  shape: BoxShape.circle,
+            ..._projects.map((project) {
+              final taskCount = _todos.where((todo) => todo.projectId == project.id && !todo.isCompleted).length;
+              debugPrint('🔄 [Sidebar] Projet "${project.name}": $taskCount tâches');
+              
+              return ListTile(
+                leading: Container(
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: project.color,
+                    shape: BoxShape.circle,
+                  ),
                 ),
-              ),
-              title: Text(project.name),
-              subtitle: Text('${_todos.where((todo) => todo.projectId == project.id && !todo.isCompleted).length} tâches'),
-              selected: _selectedProject?.id == project.id,
-              onTap: () {
-                setState(() {
-                  _selectedProject = project;
-                });
-                Navigator.pop(context);
-              },
+                title: Text(project.name),
+                subtitle: Text('$taskCount tâches'),
+                selected: _selectedProject?.id == project.id,
+                onTap: () {
+                  setState(() {
+                    _selectedProject = project;
+                  });
+                  Navigator.pop(context);
+                },
               trailing: PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert),
                 onSelected: (value) {
@@ -1458,7 +1522,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
                   ),
                 ],
               ),
-            )),
+            );
+            }),
             Divider(),
             ListTile(
               leading: Icon(Icons.add),
@@ -2252,10 +2317,12 @@ class _EditTodoModalState extends State<EditTodoModal> {
     _selectedDate = widget.todo.dueDate;
     _selectedReminder = widget.todo.reminder;
     _selectedPriority = widget.todo.priority;
-    _selectedProject = widget.projects.firstWhere(
-      (project) => project.id == widget.todo.projectId,
-      orElse: () => widget.projects.first,
-    );
+    _selectedProject = widget.projects.isEmpty 
+        ? null 
+        : widget.projects.firstWhere(
+            (project) => project.id == widget.todo.projectId,
+            orElse: () => widget.projects.first,
+          );
     _subTasks = widget.subTasks;
   }
 
@@ -2267,12 +2334,22 @@ class _EditTodoModalState extends State<EditTodoModal> {
           description: '',
           estimatedMinutes: null,
         );
+        
+        // Ajouter la sous-tâche à la liste principale
         widget.onAddSubTask(subTask);
-        _subTaskController.clear();
+        
+        // Mettre à jour la liste locale
         setState(() {
           _subTasks = List.from(_subTasks)..add(subTask);
         });
+        
+        // Sauvegarder immédiatement
+        widget.homeState._saveData();
+        
+        _subTaskController.clear();
+        debugPrint('✅ _addSubTask(): Sous-tâche "${subTask.title}" ajoutée et sauvegardée');
       } catch (e) {
+        debugPrint('❌ _addSubTask(): Erreur lors de l\'ajout de la sous-tâche: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString())),
         );
@@ -2307,9 +2384,17 @@ class _EditTodoModalState extends State<EditTodoModal> {
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () {
+                      debugPrint('🔄 [EditTodoModal] Bouton fermer (X) cliqué');
+                      
                       // Sauvegarder automatiquement avant de fermer
                       _saveChanges();
-                      widget.homeState.setState(() {}); // Rafraîchir la liste principale
+                      
+                      // Forcer un rafraîchissement complet de la vue
+                      widget.homeState.setState(() {
+                        debugPrint('🔄 [EditTodoModal] setState() appelé après clic sur X');
+                      });
+                      
+                      debugPrint('🔄 [EditTodoModal] Fermeture du modal...');
                       Navigator.pop(context);
                     },
                   ),
@@ -2636,10 +2721,25 @@ class _EditTodoModalState extends State<EditTodoModal> {
                                   IconButton(
                                     icon: const Icon(Icons.delete, color: Colors.red),
                                     onPressed: () {
-                                      debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title}');
+                                      debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title} (ID: ${subTask.id})');
+                                      
+                                      // Supprimer de la liste locale
                                       setState(() {
                                         _subTasks.removeAt(index);
                                       });
+                                      
+                                      // Supprimer de la liste principale
+                                      final mainIndex = widget.homeState._todos.indexWhere((t) => t.id == subTask.id);
+                                      if (mainIndex != -1) {
+                                        widget.homeState._todos.removeAt(mainIndex);
+                                        debugPrint('🟢 [EditTodoModal] Sous-tâche supprimée de la liste principale');
+                                        
+                                        // Sauvegarder immédiatement
+                                        widget.homeState._saveData();
+                                        debugPrint('🟢 [EditTodoModal] Données sauvegardées après suppression');
+                                      } else {
+                                        debugPrint('❌ [EditTodoModal] Sous-tâche non trouvée dans la liste principale');
+                                      }
                                     },
                                     tooltip: 'Supprimer cette sous-tâche',
                                   ),
@@ -2778,8 +2878,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
 
   // Méthode pour sauvegarder automatiquement les modifications
   void _saveChanges() {
-    if (_titleController.text.trim().isEmpty || _selectedProject == null) {
-      return; // Ne pas sauvegarder si les données ne sont pas valides
+    if (_titleController.text.trim().isEmpty) {
+      debugPrint('❌ _saveChanges(): Titre vide, sauvegarde annulée');
+      return; // Ne pas sauvegarder si le titre est vide
     }
     
     int? estimatedMinutes;
@@ -2787,9 +2888,11 @@ class _EditTodoModalState extends State<EditTodoModal> {
       try {
         estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
         if (estimatedMinutes <= 0) {
+          debugPrint('❌ _saveChanges(): Temps estimé invalide, sauvegarde annulée');
           return; // Ne pas sauvegarder si le temps estimé n'est pas valide
         }
       } catch (e) {
+        debugPrint('❌ _saveChanges(): Erreur parsing temps estimé, sauvegarde annulée');
         return; // Ne pas sauvegarder si le temps estimé n'est pas un nombre valide
       }
     }
@@ -2800,7 +2903,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
       description: _descriptionController.text.trim(),
       dueDate: _selectedDate,
       priority: _selectedPriority,
-      projectId: _selectedProject!.id,
+      projectId: _selectedProject?.id, // Permettre null pour les tâches sans projet
       isCompleted: widget.todo.isCompleted,
       parentId: widget.todo.parentId,
       level: widget.todo.level,
@@ -2810,23 +2913,96 @@ class _EditTodoModalState extends State<EditTodoModal> {
       elapsedSeconds: widget.todo.elapsedSeconds,
     );
     
+    debugPrint('🔄 _saveChanges(): Mise à jour de la tâche "${updatedTodo.title}"');
+    debugPrint('🔄 _saveChanges(): Sous-tâches dans le modal: ${_subTasks.length}');
+    
     // Mettre à jour la tâche dans la liste
     final index = widget.homeState._todos.indexWhere((t) => t.id == widget.todo.id);
     if (index != -1) {
       widget.homeState._todos[index] = updatedTodo;
-      widget.homeState._saveData();
+      
+      // S'assurer que toutes les sous-tâches sont dans la liste principale
+      for (final subTask in _subTasks) {
+        final subTaskIndex = widget.homeState._todos.indexWhere((t) => t.id == subTask.id);
+        if (subTaskIndex == -1) {
+          // Sous-tâche pas encore dans la liste principale, l'ajouter
+          widget.homeState._todos.add(subTask);
+          debugPrint('🔄 _saveChanges(): Sous-tâche "${subTask.title}" ajoutée à la liste principale');
+        } else {
+          // Mettre à jour la sous-tâche existante
+          widget.homeState._todos[subTaskIndex] = subTask;
+          debugPrint('🔄 _saveChanges(): Sous-tâche "${subTask.title}" mise à jour');
+        }
+      }
+      
+      // Sauvegarder et forcer le rafraîchissement
+      widget.homeState._saveData().then((_) {
+        debugPrint('✅ _saveChanges(): Tâche et sous-tâches sauvegardées avec succès');
+        
+        // Forcer un rafraîchissement complet de la vue
+        widget.homeState.setState(() {
+          debugPrint('🔄 _saveChanges(): setState() appelé pour rafraîchir la vue');
+        });
+        
+        // Forcer le rafraîchissement de la sidebar
+        widget.homeState._refreshSidebarCounts();
+        
+        // Reprogrammer la notification si nécessaire
+        if (updatedTodo.reminder != null && updatedTodo.reminder!.isAfter(DateTime.now())) {
+          NotificationService.scheduleTaskReminder(
+            taskId: updatedTodo.id,
+            title: updatedTodo.title,
+            body: updatedTodo.description.isNotEmpty ? updatedTodo.description : 'Rappel de tâche',
+            scheduledDate: updatedTodo.reminder!,
+          ).then((_) {
+            debugPrint('✅ _saveChanges(): Notification reprogrammée pour "${updatedTodo.title}"');
+          }).catchError((e) {
+            debugPrint('❌ _saveChanges(): Erreur reprogrammation notification: $e');
+          });
+        }
+        
+        // Reprogrammer les notifications pour les sous-tâches
+        for (final subTask in _subTasks) {
+          if (subTask.reminder != null && subTask.reminder!.isAfter(DateTime.now())) {
+            NotificationService.scheduleTaskReminder(
+              taskId: subTask.id,
+              title: subTask.title,
+              body: subTask.description.isNotEmpty ? subTask.description : 'Rappel de sous-tâche',
+              scheduledDate: subTask.reminder!,
+            ).then((_) {
+              debugPrint('✅ _saveChanges(): Notification reprogrammée pour sous-tâche "${subTask.title}"');
+            }).catchError((e) {
+              debugPrint('❌ _saveChanges(): Erreur reprogrammation notification sous-tâche: $e');
+            });
+          }
+        }
+      }).catchError((e) {
+        debugPrint('❌ _saveChanges(): Erreur lors de la sauvegarde: $e');
+      });
+    } else {
+      debugPrint('❌ _saveChanges(): Tâche non trouvée dans la liste');
     }
   }
 
   @override
   void dispose() {
+    debugPrint('🔄 [EditTodoModal] dispose() appelé - Sauvegarde automatique...');
+    
     // Sauvegarder automatiquement les modifications avant de fermer
     _saveChanges();
-    widget.homeState.setState(() {}); // Rafraîchir la liste principale
+    
+    // Forcer un rafraîchissement complet de la vue
+    widget.homeState.setState(() {
+      debugPrint('🔄 [EditTodoModal] setState() appelé dans dispose() pour rafraîchir la vue');
+    });
+    
+    debugPrint('🔄 [EditTodoModal] Nettoyage des contrôleurs...');
     _titleController.dispose();
     _descriptionController.dispose();
     _estimatedTimeController.dispose();
     _subTaskController.dispose();
+    
+    debugPrint('✅ [EditTodoModal] dispose() terminé');
     super.dispose();
   }
 }
