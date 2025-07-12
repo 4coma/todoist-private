@@ -10,22 +10,33 @@ class NotificationService {
   /// Initialise le service de notifications
   /// DOIT être appelé dans main() avant runApp()
   static Future<void> initialize() async {
-    await AwesomeNotifications().initialize(
-      null, // null pour utiliser les icônes par défaut
-      [
-        NotificationChannel(
-          channelKey: _channelId,
-          channelName: _channelName,
-          channelDescription: _channelDescription,
-          defaultColor: Colors.blue,
-          ledColor: Colors.white,
-          importance: NotificationImportance.High,
-          channelShowBadge: true,
-          enableVibration: true,
-          enableLights: true,
-        ),
-      ],
-    );
+    try {
+      debugPrint('🔍 === INITIALISATION NOTIFICATIONS ===');
+      
+      await AwesomeNotifications().initialize(
+        null, // null pour utiliser les icônes par défaut
+        [
+          NotificationChannel(
+            channelKey: _channelId,
+            channelName: _channelName,
+            channelDescription: _channelDescription,
+            defaultColor: Colors.blue,
+            ledColor: Colors.white,
+            importance: NotificationImportance.High,
+            channelShowBadge: true,
+            enableVibration: true,
+            enableLights: true,
+          ),
+        ],
+      );
+      
+      debugPrint('✅ Notifications initialisées avec succès');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de l\'initialisation des notifications: $e');
+      debugPrint('⚠️ L\'application continuera sans les notifications');
+    }
+    
+    debugPrint('🔍 === FIN INITIALISATION NOTIFICATIONS ===');
   }
 
   /// Demande les permissions de notification
@@ -42,42 +53,55 @@ class NotificationService {
     required DateTime scheduledDate, // Date/heure de déclenchement
     Map<String, String>? payload, // Données supplémentaires (optionnel)
   }) async {
-    debugPrint('🔍 === PROGRAMMATION RAPPEL AVEC AWESOME_NOTIFICATIONS ===');
-    debugPrint('🔍 ID: $id, Titre: $title, Date: $scheduledDate');
-    if (payload != null) {
-      debugPrint('🔍 Payload: $payload');
+    try {
+      debugPrint('🔍 === PROGRAMMATION RAPPEL AVEC AWESOME_NOTIFICATIONS ===');
+      debugPrint('🔍 ID: $id, Titre: $title, Date: $scheduledDate');
+      if (payload != null) {
+        debugPrint('🔍 Payload: $payload');
+      }
+      
+      await AwesomeNotifications().createNotification(
+        content: NotificationContent(
+          id: id,
+          channelKey: _channelId,
+          title: title,
+          body: body,
+          notificationLayout: NotificationLayout.Default,
+          category: NotificationCategory.Reminder,
+          payload: payload, // Inclure les données de navigation
+        ),
+        schedule: NotificationCalendar.fromDate(
+          date: scheduledDate,
+          allowWhileIdle: true, // IMPORTANT: Permet l'exécution même en mode économie d'énergie
+        ),
+      );
+      
+      debugPrint('✅ Rappel programmé avec succès pour ID: $id');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la programmation du rappel: $e');
     }
     
-    await AwesomeNotifications().createNotification(
-      content: NotificationContent(
-        id: id,
-        channelKey: _channelId,
-        title: title,
-        body: body,
-        notificationLayout: NotificationLayout.Default,
-        category: NotificationCategory.Reminder,
-        payload: payload, // Inclure les données de navigation
-      ),
-      schedule: NotificationCalendar.fromDate(
-        date: scheduledDate,
-        allowWhileIdle: true, // IMPORTANT: Permet l'exécution même en mode économie d'énergie
-      ),
-    );
-    
-    debugPrint('✅ Rappel programmé avec succès pour ID: $id');
     debugPrint('🔍 === FIN PROGRAMMATION RAPPEL ===');
   }
 
   /// Annule une notification spécifique
   static Future<void> cancelReminder(int id) async {
-    await AwesomeNotifications().cancel(id);
-    debugPrint('Notification annulée pour ID: $id');
+    try {
+      await AwesomeNotifications().cancel(id);
+      debugPrint('Notification annulée pour ID: $id');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de l\'annulation de la notification: $e');
+    }
   }
 
   /// Annule toutes les notifications
   static Future<void> cancelAllReminders() async {
-    await AwesomeNotifications().cancelAll();
-    debugPrint('Toutes les notifications ont été annulées');
+    try {
+      await AwesomeNotifications().cancelAll();
+      debugPrint('Toutes les notifications ont été annulées');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de l\'annulation de toutes les notifications: $e');
+    }
   }
 
   /// Configure l'écoute des actions sur les notifications
