@@ -200,14 +200,7 @@ class TodoHomePage extends StatefulWidget {
 }
 
 class _TodoHomePageState extends State<TodoHomePage> {
-  List<Project> _projects = [
-    Project(
-      id: 1,
-      name: 'Personnel',
-      color: Colors.blue,
-      isDefault: true,
-    ),
-  ];
+  List<Project> _projects = [];
   List<TodoItem> _todos = [];
   Project? _selectedProject;
   SortType _currentSort = SortType.dateAdded;
@@ -274,6 +267,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
     try {
       debugPrint('🔄 _loadData(): Début du chargement des données...');
       final localStorageService = LocalStorageService();
+      
+
       
       // Charger les projets (créer une copie modifiable)
       setState(() {
@@ -535,14 +530,42 @@ class _TodoHomePageState extends State<TodoHomePage> {
     });
   }
 
-  void _deleteProject(Project project) {
+  void _deleteProject(Project project) async {
+    debugPrint('🔄 _deleteProject(): Début de la suppression du projet: ${project.name} (ID: ${project.id})');
+
+    // Compter les tâches dans ce projet
+    final projectTodos = _todos.where((todo) => todo.projectId == project.id).length;
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Supprimer le projet'),
-        content: Text(
-          'Êtes-vous sûr de vouloir supprimer le projet "${project.name}" ? '
-          'Toutes les tâches associées seront également supprimées.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Êtes-vous sûr de vouloir supprimer le projet "${project.name}" ?',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            if (projectTodos > 0) ...[
+              Text(
+                'Ce projet contient $projectTodos tâche${projectTodos > 1 ? 's' : ''}.',
+                style: const TextStyle(color: Colors.orange),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Toutes les tâches seront supprimées définitivement.',
+                style: TextStyle(color: Colors.red),
+              ),
+            ] else ...[
+              const Text(
+                'Ce projet ne contient aucune tâche.',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(
@@ -551,22 +574,99 @@ class _TodoHomePageState extends State<TodoHomePage> {
           ),
           TextButton(
             onPressed: () async {
-              setState(() {
-                _projects.remove(project);
-                _todos.removeWhere((todo) => todo.projectId == project.id);
-                if (_selectedProject?.id == project.id) {
-                  _selectedProject = _projects.isNotEmpty ? _projects.first : null;
+              debugPrint('🔄 _deleteProject(): Bouton de suppression cliqué');
+              try {
+                // Utiliser le service pour supprimer le projet
+                debugPrint('🔄 _deleteProject(): Appel du service de suppression...');
+                final localStorageService = LocalStorageService();
+                final success = await localStorageService.deleteProject(project.id);
+                debugPrint('🔄 _deleteProject(): Résultat de la suppression: $success');
+                
+                if (success) {
+                  debugPrint('✅ _deleteProject(): Suppression réussie, rechargement des données...');
+                  // Recharger les données depuis le service
+                  setState(() {
+                    _projects = List<Project>.from(localStorageService.projects);
+                    _todos = List<TodoItem>.from(localStorageService.todos);
+                    debugPrint('🔄 _deleteProject(): ${_projects.length} projets rechargés');
+                    debugPrint('🔄 _deleteProject(): ${_todos.length} tâches rechargées');
+                    
+                    // Si le projet supprimé était sélectionné, sélectionner le projet par défaut
+                    if (_selectedProject?.id == project.id) {
+                      debugPrint('🔄 _deleteProject(): Projet supprimé était sélectionné, changement de sélection...');
+                      _selectedProject = _projects.isNotEmpty ? _projects.first : null;
+                      debugPrint('🔄 _deleteProject(): Nouveau projet sélectionné: ${_selectedProject?.name ?? 'Aucun'}');
+                    }
+                  });
+                  
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Projet "${project.name}" supprimé avec succès'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                  debugPrint('✅ _deleteProject(): Suppression terminée avec succès');
+                } else {
+                  debugPrint('❌ _deleteProject(): Échec de la suppression');
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Erreur lors de la suppression du projet'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
-              });
-              
-              // Sauvegarder les données
-              await _saveData();
-              Navigator.pop(context);
+              } catch (e) {
+                debugPrint('❌ _deleteProject(): Exception lors de la suppression: $e');
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Erreur lors de la suppression: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Supprimer'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _editProject(Project project) {
+    debugPrint('✏️ _editProject(): Modification du projet: ${project.name} (ID: ${project.id})');
+    
+    showDialog(
+      context: context,
+      builder: (context) => EditProjectDialog(
+        project: project,
+        onProjectUpdated: (updatedProject) async {
+          debugPrint('🔄 _editProject(): Projet mis à jour, rechargement des données...');
+          final localStorageService = LocalStorageService();
+          
+          // Recharger les données depuis le service
+          setState(() {
+            _projects = List<Project>.from(localStorageService.projects);
+            debugPrint('🔄 _editProject(): ${_projects.length} projets rechargés');
+            
+            // Mettre à jour le projet sélectionné si c'était celui-ci
+            if (_selectedProject?.id == project.id) {
+              _selectedProject = _projects.firstWhere((p) => p.id == project.id);
+              debugPrint('🔄 _editProject(): Projet sélectionné mis à jour: ${_selectedProject?.name}');
+            }
+          });
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Projet "${updatedProject.name}" modifié avec succès'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          debugPrint('✅ _editProject(): Modification terminée avec succès');
+        },
       ),
     );
   }
@@ -615,8 +715,13 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   void _toggleTodo(int id) async {
     setState(() {
-      final todo = _todos.firstWhere((todo) => todo.id == id);
-      todo.isCompleted = !todo.isCompleted;
+      try {
+        final todo = _todos.firstWhere((todo) => todo.id == id);
+        todo.isCompleted = !todo.isCompleted;
+      } catch (e) {
+        debugPrint('❌ Tâche non trouvée pour toggle: $id');
+        return;
+      }
     });
     
     // Sauvegarder les données
@@ -707,41 +812,44 @@ class _TodoHomePageState extends State<TodoHomePage> {
               title: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          subTask.title,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
-                            color: subTask.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (subTask.dueDate != null) ...[
-                        const SizedBox(width: 8),
-                        Icon(Icons.calendar_today, size: 14),
-                        const SizedBox(width: 2),
-                        Text(
-                          '${subTask.dueDate!.day}/${subTask.dueDate!.month}/${subTask.dueDate!.year}',
-                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
-                        ),
-                      ],
-                      if (subTask.reminder != null) ...[
-                        const SizedBox(width: 8),
-                        Icon(Icons.alarm, size: 14),
-                        const SizedBox(width: 2),
-                        Text(
-                          '${subTask.reminder!.day}/${subTask.reminder!.month}/${subTask.reminder!.year} à ${subTask.reminder!.hour.toString().padLeft(2, '0')}:${subTask.reminder!.minute.toString().padLeft(2, '0')}',
-                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
-                        ),
-                      ],
-                    ],
+                  // Titre sur la première ligne
+                  Text(
+                    subTask.title,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
+                      color: subTask.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
+                  // Dates sur la deuxième ligne
+                  if (subTask.dueDate != null || subTask.reminder != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          if (subTask.dueDate != null) ...[
+                            Icon(Icons.calendar_today, size: 14),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${subTask.dueDate!.day}/${subTask.dueDate!.month}/${subTask.dueDate!.year}',
+                              style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                            ),
+                          ],
+                          if (subTask.dueDate != null && subTask.reminder != null)
+                            const SizedBox(width: 12),
+                          if (subTask.reminder != null) ...[
+                            Icon(Icons.alarm, size: 14),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${subTask.reminder!.day}/${subTask.reminder!.month}/${subTask.reminder!.year} à ${subTask.reminder!.hour.toString().padLeft(2, '0')}:${subTask.reminder!.minute.toString().padLeft(2, '0')}',
+                              style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                 ],
               ),
               subtitle: Padding(
@@ -1247,7 +1355,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
         automaticallyImplyLeading: true,
       ),
       drawer: Drawer(
-        child: Column(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        child: ListView(
+          padding: EdgeInsets.zero,
           children: [
             DrawerHeader(
               decoration: BoxDecoration(
@@ -1314,6 +1424,40 @@ class _TodoHomePageState extends State<TodoHomePage> {
                 });
                 Navigator.pop(context);
               },
+              trailing: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert),
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    Navigator.pop(context); // Fermer le drawer
+                    _editProject(project);
+                  } else if (value == 'delete') {
+                    Navigator.pop(context); // Fermer le drawer
+                    _deleteProject(project);
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem<String>(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text('Modifier', style: TextStyle(color: Colors.blue)),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem<String>(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Supprimer', style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             )),
             Divider(),
             ListTile(
@@ -1324,7 +1468,6 @@ class _TodoHomePageState extends State<TodoHomePage> {
                 _addProject();
               },
             ),
-            Spacer(),
             Divider(),
             ListTile(
               leading: Icon(Icons.settings),
@@ -1412,41 +1555,44 @@ class _TodoHomePageState extends State<TodoHomePage> {
                               title: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(
-                                    crossAxisAlignment: CrossAxisAlignment.center,
-                                    children: [
-                                      Flexible(
-                                        child: Text(
-                                          todo.title,
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                            decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
-                                            color: todo.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      if (todo.dueDate != null) ...[
-                                        const SizedBox(width: 8),
-                                        Icon(Icons.calendar_today, size: 14),
-                                        const SizedBox(width: 2),
-                                        Text(
-                                          '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
-                                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
-                                        ),
-                                      ],
-                                      if (todo.reminder != null) ...[
-                                        const SizedBox(width: 8),
-                                        Icon(Icons.alarm, size: 14),
-                                        const SizedBox(width: 2),
-                                        Text(
-                                          '${todo.reminder!.day}/${todo.reminder!.month}/${todo.reminder!.year} à ${todo.reminder!.hour.toString().padLeft(2, '0')}:${todo.reminder!.minute.toString().padLeft(2, '0')}',
-                                          style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
-                                        ),
-                                      ],
-                                    ],
+                                  // Titre sur la première ligne
+                                  Text(
+                                    todo.title,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
+                                      color: todo.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
+                                  // Dates sur la deuxième ligne
+                                  if (todo.dueDate != null || todo.reminder != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Row(
+                                        children: [
+                                          if (todo.dueDate != null) ...[
+                                            Icon(Icons.calendar_today, size: 14),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
+                                              style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                                            ),
+                                          ],
+                                          if (todo.dueDate != null && todo.reminder != null)
+                                            const SizedBox(width: 12),
+                                          if (todo.reminder != null) ...[
+                                            Icon(Icons.alarm, size: 14),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              '${todo.reminder!.day}/${todo.reminder!.month}/${todo.reminder!.year} à ${todo.reminder!.hour.toString().padLeft(2, '0')}:${todo.reminder!.minute.toString().padLeft(2, '0')}',
+                                              style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
                                 ],
                               ),
                               subtitle: Padding(
@@ -1639,6 +1785,16 @@ class _TodoHomePageState extends State<TodoHomePage> {
                   ),
                 ),
               ),
+              // Bouton de suppression (seulement si le projet est sélectionné et n'est pas le projet par défaut)
+              if (isSelected)
+                Container(
+                  margin: const EdgeInsets.only(left: 8),
+                  child: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red, size: 18),
+                    onPressed: () => _deleteProject(project),
+                    tooltip: 'Supprimer ce projet',
+                  ),
+                ),
             ],
           ),
         ),
@@ -2129,6 +2285,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
+        top: MediaQuery.of(context).padding.top + 16, // Ajouter un padding pour éviter la zone de statut
       ),
       child: SingleChildScrollView(
         child: Container(
@@ -2149,7 +2306,12 @@ class _EditTodoModalState extends State<EditTodoModal> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () {
+                      // Sauvegarder automatiquement avant de fermer
+                      _saveChanges();
+                      widget.homeState.setState(() {}); // Rafraîchir la liste principale
+                      Navigator.pop(context);
+                    },
                   ),
                 ],
               ),
@@ -2513,73 +2675,12 @@ class _EditTodoModalState extends State<EditTodoModal> {
                         }
                       });
                       // Sauvegarder la tâche réinitialisée
-                      final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
-                      if (homeState != null) {
-                        homeState._saveData();
-                      }
+                      widget.homeState._saveData();
                     },
                   ),
                 ],
               ),
               const SizedBox(height: 16),
-              // Boutons
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Annuler'),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton(
-                        onPressed: () {
-                          if (_titleController.text.trim().isEmpty || _selectedProject == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Veuillez entrer un titre et sélectionner un projet')),
-                            );
-                            return;
-                          }
-                          int? estimatedMinutes;
-                          if (_estimatedTimeController.text.trim().isNotEmpty) {
-                            try {
-                              estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
-                              if (estimatedMinutes <= 0) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
-                                );
-                                return;
-                              }
-                            } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
-                              );
-                              return;
-                            }
-                          }
-                          final updatedTodo = TodoItem(
-                            id: widget.todo.id,
-                            title: _titleController.text.trim(),
-                            description: _descriptionController.text.trim(),
-                            dueDate: _selectedDate,
-                            priority: _selectedPriority,
-                            projectId: _selectedProject!.id,
-                            isCompleted: widget.todo.isCompleted,
-                            parentId: widget.todo.parentId,
-                            level: widget.todo.level,
-                            reminder: _selectedReminder,
-                            estimatedMinutes: estimatedMinutes,
-                            elapsedMinutes: widget.todo.elapsedMinutes,
-                            elapsedSeconds: widget.todo.elapsedSeconds,
-                          );
-                          Navigator.pop(context, {'todo': updatedTodo});
-                            },
-                      child: const Text('Sauvegarder'),
-                    ),
-                  ),
-                ],
-                ),
                 // Bouton "Marquer comme terminée"
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
@@ -2635,7 +2736,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                 const SizedBox(height: 16),
                 // Bouton de suppression (tout en bas)
                 OutlinedButton.icon(
-                  onPressed: () {
+                  onPressed: () async {
                     showDialog(
                       context: context,
                       builder: (context) => AlertDialog(
@@ -2647,11 +2748,10 @@ class _EditTodoModalState extends State<EditTodoModal> {
                             child: const Text('Annuler'),
                           ),
                           TextButton(
-                            onPressed: () {
-                              final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
-                              if (homeState != null) {
-                                homeState._deleteTodo(widget.todo.id);
-                              }
+                            onPressed: () async {
+                              // Utiliser directement widget.homeState au lieu de context.findAncestorStateOfType
+                              widget.homeState._deleteTodo(widget.todo.id);
+                              widget.homeState.setState(() {});
                               Navigator.pop(context); // Fermer la boîte de dialogue
                               Navigator.pop(context); // Fermer la modale d'édition
                             },
@@ -2676,8 +2776,53 @@ class _EditTodoModalState extends State<EditTodoModal> {
     );
   }
 
+  // Méthode pour sauvegarder automatiquement les modifications
+  void _saveChanges() {
+    if (_titleController.text.trim().isEmpty || _selectedProject == null) {
+      return; // Ne pas sauvegarder si les données ne sont pas valides
+    }
+    
+    int? estimatedMinutes;
+    if (_estimatedTimeController.text.trim().isNotEmpty) {
+      try {
+        estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+        if (estimatedMinutes <= 0) {
+          return; // Ne pas sauvegarder si le temps estimé n'est pas valide
+        }
+      } catch (e) {
+        return; // Ne pas sauvegarder si le temps estimé n'est pas un nombre valide
+      }
+    }
+    
+    final updatedTodo = TodoItem(
+      id: widget.todo.id,
+      title: _titleController.text.trim(),
+      description: _descriptionController.text.trim(),
+      dueDate: _selectedDate,
+      priority: _selectedPriority,
+      projectId: _selectedProject!.id,
+      isCompleted: widget.todo.isCompleted,
+      parentId: widget.todo.parentId,
+      level: widget.todo.level,
+      reminder: _selectedReminder,
+      estimatedMinutes: estimatedMinutes,
+      elapsedMinutes: widget.todo.elapsedMinutes,
+      elapsedSeconds: widget.todo.elapsedSeconds,
+    );
+    
+    // Mettre à jour la tâche dans la liste
+    final index = widget.homeState._todos.indexWhere((t) => t.id == widget.todo.id);
+    if (index != -1) {
+      widget.homeState._todos[index] = updatedTodo;
+      widget.homeState._saveData();
+    }
+  }
+
   @override
   void dispose() {
+    // Sauvegarder automatiquement les modifications avant de fermer
+    _saveChanges();
+    widget.homeState.setState(() {}); // Rafraîchir la liste principale
     _titleController.dispose();
     _descriptionController.dispose();
     _estimatedTimeController.dispose();
@@ -2774,12 +2919,152 @@ class _AddProjectDialogState extends State<AddProjectDialog> {
                     id: DateTime.now().millisecondsSinceEpoch,
                     name: _nameController.text.trim(),
                     color: _selectedColor,
-                    isDefault: false,
+
                   );
                   Navigator.pop(context, newProject);
                 }
               : null,
           child: const Text('Créer'),
+        ),
+      ],
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+}
+
+class EditProjectDialog extends StatefulWidget {
+  final Project project;
+  final Function(Project) onProjectUpdated;
+  
+  const EditProjectDialog({
+    super.key,
+    required this.project,
+    required this.onProjectUpdated,
+  });
+
+  @override
+  State<EditProjectDialog> createState() => _EditProjectDialogState();
+}
+
+class _EditProjectDialogState extends State<EditProjectDialog> {
+  late final TextEditingController _nameController;
+  late Color _selectedColor;
+  bool _isNameValid = false;
+
+  final List<Color> _availableColors = [
+    Colors.blue,
+    Colors.green,
+    Colors.purple,
+    Colors.orange,
+    Colors.red,
+    Colors.pink,
+    Colors.indigo,
+    Colors.teal,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.project.name);
+    _selectedColor = widget.project.color;
+    _isNameValid = _nameController.text.trim().isNotEmpty;
+    _nameController.addListener(_onNameChanged);
+  }
+
+  void _onNameChanged() {
+    setState(() {
+      _isNameValid = _nameController.text.trim().isNotEmpty;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Modifier le Projet'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameController,
+            decoration: const InputDecoration(
+              labelText: 'Nom du projet',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text('Couleur du projet'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: _availableColors.map((color) {
+              return InkWell(
+                onTap: () {
+                  setState(() {
+                    _selectedColor = color;
+                  });
+                },
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: _selectedColor == color ? Colors.black : Colors.transparent,
+                      width: 3,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+        ElevatedButton(
+          onPressed: _isNameValid
+              ? () async {
+                  try {
+                    final localStorageService = LocalStorageService();
+                    final updatedProject = await localStorageService.updateProject(
+                      widget.project.id,
+                      {
+                        'name': _nameController.text.trim(),
+                        'color': _selectedColor,
+                      },
+                    );
+                    
+                    if (updatedProject != null) {
+                      widget.onProjectUpdated(updatedProject);
+                      Navigator.pop(context);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Erreur lors de la modification du projet'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Erreur lors de la modification: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              : null,
+          child: const Text('Modifier'),
         ),
       ],
     );
@@ -2879,6 +3164,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.onSettingsChanged();
   }
 
+
+
+      void _deleteProjectFromSettings(Project project) {
+        // Tous les projets peuvent être supprimés
+        _deleteProject(project);
+      }
+
+      void _deleteProject(Project project) async {
+        debugPrint('🔄 _deleteProject(): Début de la suppression du projet: ${project.name} (ID: ${project.id})');
+
+        // Compter les tâches dans ce projet
+        final localStorageService = LocalStorageService();
+        final projectTodos = localStorageService.getTodosByProject(project.id);
+        
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Supprimer le projet'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Êtes-vous sûr de vouloir supprimer le projet "${project.name}" ?',
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                if (projectTodos.isNotEmpty) ...[
+                  Text(
+                    'Ce projet contient ${projectTodos.length} tâche${projectTodos.length > 1 ? 's' : ''}.',
+                    style: const TextStyle(color: Colors.orange),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Toutes les tâches seront supprimées définitivement.',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ] else ...[
+                  const Text(
+                    'Ce projet ne contient aucune tâche.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Annuler'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  try {
+                    final success = await localStorageService.deleteProject(project.id);
+                    
+                    if (success) {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Projet "${project.name}" supprimé avec succès'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                      // Recharger les données
+                      widget.onDataReload();
+                    } else {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Erreur lors de la suppression du projet'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Erreur lors de la suppression: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                },
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('Supprimer'),
+              ),
+            ],
+          ),
+        );
+      }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -2888,554 +3265,428 @@ class _SettingsScreenState extends State<SettingsScreen> {
           top: Radius.circular(24),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Drag handle
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade300,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Text(
-              'Paramètres',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: Theme.of(context).colorScheme.onSurface,
-                letterSpacing: -0.5,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              children: [
-                // Section Thème
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.palette, color: Theme.of(context).colorScheme.primary),
-                          const SizedBox(width: 12),
-                          Text(
-                            'Thème',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      // Section Couleurs
-                      Text(
-                        'Couleur des éléments',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _buildColorOptionSettings('Bleu', 'blue', const Color(0xFF2563EB)),
-                          _buildColorOptionSettings('Vert', 'green', const Color(0xFF059669)),
-                          _buildColorOptionSettings('Violet', 'purple', const Color(0xFF7C3AED)),
-                          _buildColorOptionSettings('Orange', 'orange', const Color(0xFFEA580C)),
-                          _buildColorOptionSettings('Rose', 'pink', const Color(0xFFEC4899)),
-                          _buildColorOptionSettings('Teal', 'teal', const Color(0xFF0D9488)),
-                          _buildColorOptionSettings('Indigo', 'indigo', const Color(0xFF4F46E5)),
-                          _buildColorOptionSettings('Rouge', 'red', const Color(0xFFDC2626)),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      // Section Mode
-                      Text(
-                        'Mode d\'affichage',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildModeOptionSettings('Clair', false, Icons.wb_sunny),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildModeOptionSettings('Sombre', true, Icons.nightlight_round),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Paramètres',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  letterSpacing: -0.5,
                 ),
-                const SizedBox(height: 20),
-                // Section Affichage
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: [
+                  // Section Thème
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                      ),
                     ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.visibility, color: Theme.of(context).colorScheme.primary),
-                          const SizedBox(width: 12),
-                          Text(
-                            'Affichage',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      SwitchListTile(
-                        title: Text('Afficher les descriptions'),
-                        subtitle: Text('Afficher les descriptions des tâches dans la liste principale'),
-                        value: _showDescriptions,
-                        onChanged: _saveShowDescriptions,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                      const SizedBox(height: 8),
-                      SwitchListTile(
-                        title: Text('Afficher les tâches terminées'),
-                        subtitle: Text('Afficher les tâches terminées dans tous les projets'),
-                        value: _showCompletedTasksInProjects,
-                        onChanged: _saveShowCompletedTasks,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // Section Données
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.storage, color: Theme.of(context).colorScheme.primary),
-                          const SizedBox(width: 12),
-                          Text(
-                            'Données',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Sauvegardez ou restaurez toutes vos données (tâches, projets, préférences)',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                try {
-                                  // Afficher un indicateur de chargement
-                                  showDialog(
-                                    context: context,
-                                    barrierDismissible: false,
-                                    builder: (context) => const Center(
-                                      child: CircularProgressIndicator(),
-                                    ),
-                                  );
-
-                                  final exportService = DataExportImportService();
-                                  final data = exportService.exportAllData();
-                                  
-                                  final fileService = FileService();
-                                  final savedPath = await fileService.saveDataToFile(data);
-                                  
-                                  // Fermer l'indicateur de chargement
-                                  Navigator.of(context).pop();
-                                  
-                                  if (savedPath != null) {
-                                    debugPrint('✅ Export réussi: \\${data.length} clés -> \\${savedPath}');
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Sauvegarde réussie !\\nFichier: \\${savedPath.split('/').last}'),
-                                        backgroundColor: Colors.green,
-                                        duration: const Duration(seconds: 4),
-                                      ),
-                                    );
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Sauvegarde annulée'),
-                                        backgroundColor: Colors.orange,
-                                      ),
-                                    );
-                                  }
-                                } catch (e) {
-                                  // Fermer l'indicateur de chargement en cas d'erreur
-                                  if (Navigator.canPop(context)) {
-                                    Navigator.of(context).pop();
-                                  }
-                                  debugPrint('❌ Erreur export: \\${e}');
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Erreur lors de la sauvegarde: \\${e}'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                }
-                              },
-                              icon: const Icon(Icons.download),
-                              label: const Text('Sauvegarder'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Theme.of(context).colorScheme.primary,
-                                foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.palette, color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Thème',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
                               ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        // Section Couleurs
+                        Text(
+                          'Couleur des éléments',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                try {
-                                  // Afficher un indicateur de chargement
-                                  showDialog(
-                                    context: context,
-                                    barrierDismissible: false,
-                                    builder: (context) => const Center(
-                                      child: CircularProgressIndicator(),
-                                    ),
-                                  );
-
-                                  final fileService = FileService();
-                                  final data = await fileService.loadDataFromFile();
-                                  
-                                  // Fermer l'indicateur de chargement
-                                  Navigator.of(context).pop();
-                                  
-                                  if (data != null) {
-                                    // Vérifier que le fichier est valide
-                                    if (!fileService.isValidBackupFile(data)) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Fichier invalide. Format de sauvegarde non reconnu.'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
-                                      return;
-                                    }
-
-                                    final exportService = DataExportImportService();
-                                    await exportService.importAllData(data);
-                                    
-                                    debugPrint('✅ Import réussi depuis fichier');
-                                    
-                                    // Forcer le rechargement des données dans main.dart
-                                    final localStorageService = LocalStorageService();
-                                    await localStorageService.reloadData();
-                                    
-                                    // Recharger les données dans l'interface
-                                    widget.onDataReload();
-                                    
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Restauration réussie !\\nDonnées importées avec succès'),
-                                        backgroundColor: Colors.green,
-                                        duration: const Duration(seconds: 4),
-                                      ),
-                                    );
-                                    
-                                    // Rafraîchir l'interface
-                                    widget.onSettingsChanged();
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Import annulé'),
-                                        backgroundColor: Colors.orange,
-                                      ),
-                                    );
-                                  }
-                                } catch (e) {
-                                  // Fermer l'indicateur de chargement en cas d'erreur
-                                  if (Navigator.canPop(context)) {
-                                    Navigator.of(context).pop();
-                                  }
-                                  debugPrint('❌ Erreur import: \\${e}');
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Erreur lors de la restauration: \\${e}'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                }
-                              },
-                              icon: const Icon(Icons.upload),
-                              label: const Text('Restaurer'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Theme.of(context).colorScheme.secondary,
-                                foregroundColor: Theme.of(context).colorScheme.onSecondary,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _buildColorOptionSettings('Bleu', 'blue', const Color(0xFF2563EB)),
+                            _buildColorOptionSettings('Vert', 'green', const Color(0xFF059669)),
+                            _buildColorOptionSettings('Violet', 'purple', const Color(0xFF7C3AED)),
+                            _buildColorOptionSettings('Orange', 'orange', const Color(0xFFEA580C)),
+                            _buildColorOptionSettings('Rose', 'pink', const Color(0xFFEC4899)),
+                            _buildColorOptionSettings('Teal', 'teal', const Color(0xFF0D9488)),
+                            _buildColorOptionSettings('Indigo', 'indigo', const Color(0xFF4F46E5)),
+                            _buildColorOptionSettings('Rouge', 'red', const Color(0xFFDC2626)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        // Section Mode
+                        Text(
+                          'Mode d\'affichage',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildModeOptionSettings('Clair', false, Icons.wb_sunny),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _buildModeOptionSettings('Sombre', true, Icons.nightlight_round),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  // Section Affichage
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.visibility, color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Affichage',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        SwitchListTile(
+                          title: Text('Afficher les descriptions'),
+                          subtitle: Text('Afficher les descriptions des tâches dans la liste principale'),
+                          value: _showDescriptions,
+                          onChanged: _saveShowDescriptions,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        const SizedBox(height: 8),
+                        SwitchListTile(
+                          title: Text('Afficher les tâches terminées'),
+                          subtitle: Text('Afficher les tâches terminées dans tous les projets'),
+                          value: _showCompletedTasksInProjects,
+                          onChanged: _saveShowCompletedTasks,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Section Données
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
                       ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                final confirmed = await showDialog<bool>(
-                                  context: context,
-                                  builder: (context) => AlertDialog(
-                                    title: const Text('Confirmer la suppression'),
-                                    content: const Text('Êtes-vous sûr de vouloir supprimer TOUTES les données ? Cette action est irréversible.'),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.of(context).pop(false),
-                                        child: const Text('Annuler'),
-                                      ),
-                                      ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.red,
-                                          foregroundColor: Colors.white,
-                                        ),
-                                        onPressed: () => Navigator.of(context).pop(true),
-                                        child: const Text('Supprimer'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                                if (confirmed == true) {
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.storage, color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Données',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Sauvegardez ou restaurez toutes vos données (tâches, projets, préférences)',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
                                   try {
+                                    // Afficher un indicateur de chargement
                                     showDialog(
                                       context: context,
                                       barrierDismissible: false,
-                                      builder: (context) => const Center(child: CircularProgressIndicator()),
-                                    );
-                                    await DataExportImportService().clearAllData();
-                                    Navigator.of(context).pop();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Toutes les données ont été supprimées.'),
-                                        backgroundColor: Colors.red,
+                                      builder: (context) => const Center(
+                                        child: CircularProgressIndicator(),
                                       ),
                                     );
-                                    widget.onSettingsChanged();
+
+                                    final exportService = DataExportImportService();
+                                    final data = exportService.exportAllData();
+                                    
+                                    final fileService = FileService();
+                                    final savedPath = await fileService.saveDataToFile(data);
+                                    
+                                    // Fermer l'indicateur de chargement
+                                    Navigator.of(context).pop();
+                                    
+                                    if (savedPath != null) {
+                                      debugPrint('✅ Export réussi: \\${data.length} clés -> \\${savedPath}');
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Sauvegarde réussie !\\nFichier: \\${savedPath.split('/').last}'),
+                                          backgroundColor: Colors.green,
+                                          duration: const Duration(seconds: 4),
+                                        ),
+                                      );
+                                    } else {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Sauvegarde annulée'),
+                                          backgroundColor: Colors.orange,
+                                        ),
+                                      );
+                                    }
                                   } catch (e) {
-                                    if (Navigator.canPop(context)) Navigator.of(context).pop();
+                                    // Fermer l'indicateur de chargement en cas d'erreur
+                                    if (Navigator.canPop(context)) {
+                                      Navigator.of(context).pop();
+                                    }
+                                    debugPrint('❌ Erreur export: \\${e}');
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Erreur lors de la suppression: \\${e}'),
+                                        content: Text('Erreur lors de la sauvegarde: \\${e}'),
                                         backgroundColor: Colors.red,
                                       ),
                                     );
                                   }
-                                }
-                              },
-                              icon: const Icon(Icons.delete_forever, color: Colors.red),
-                              label: const Text(
-                                'Supprimer toutes les données',
-                                style: TextStyle(color: Colors.red),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: Colors.red, width: 2),
-                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                },
+                                icon: const Icon(Icons.download),
+                                label: const Text('Sauvegarder'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).colorScheme.primary,
+                                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                
-                // Section Données de Test
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  try {
+                                    // Afficher un indicateur de chargement
+                                    showDialog(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (context) => const Center(
+                                        child: CircularProgressIndicator(),
+                                      ),
+                                    );
+
+                                    final fileService = FileService();
+                                    final data = await fileService.loadDataFromFile();
+                                    
+                                    // Fermer l'indicateur de chargement
+                                    Navigator.of(context).pop();
+                                    
+                                    if (data != null) {
+                                      // Vérifier que le fichier est valide
+                                      if (!fileService.isValidBackupFile(data)) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Fichier invalide. Format de sauvegarde non reconnu.'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                        return;
+                                      }
+
+                                      final exportService = DataExportImportService();
+                                      await exportService.importAllData(data);
+                                      
+                                      debugPrint('✅ Import réussi depuis fichier');
+                                      
+                                      // Forcer le rechargement des données dans main.dart
+                                      final localStorageService = LocalStorageService();
+                                      await localStorageService.reloadData();
+                                      
+                                      // Recharger les données dans l'interface
+                                      widget.onDataReload();
+                                      
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Restauration réussie !\\nDonnées importées avec succès'),
+                                          backgroundColor: Colors.green,
+                                          duration: const Duration(seconds: 4),
+                                        ),
+                                      );
+                                      
+                                      // Rafraîchir l'interface
+                                      widget.onSettingsChanged();
+                                    } else {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Import annulé'),
+                                          backgroundColor: Colors.orange,
+                                        ),
+                                      );
+                                    }
+                                  } catch (e) {
+                                    // Fermer l'indicateur de chargement en cas d'erreur
+                                    if (Navigator.canPop(context)) {
+                                      Navigator.of(context).pop();
+                                    }
+                                    debugPrint('❌ Erreur import: \\${e}');
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Erreur lors de la restauration: \\${e}'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                },
+                                icon: const Icon(Icons.upload),
+                                label: const Text('Restaurer'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).colorScheme.secondary,
+                                  foregroundColor: Theme.of(context).colorScheme.onSecondary,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: const Text('Confirmer la suppression'),
+                                      content: const Text('Êtes-vous sûr de vouloir supprimer TOUTES les données ? Cette action est irréversible.'),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.of(context).pop(false),
+                                          child: const Text('Annuler'),
+                                        ),
+                                        ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: Colors.red,
+                                            foregroundColor: Colors.white,
+                                          ),
+                                          onPressed: () => Navigator.of(context).pop(true),
+                                          child: const Text('Supprimer'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirmed == true) {
+                                    try {
+                                      showDialog(
+                                        context: context,
+                                        barrierDismissible: false,
+                                        builder: (context) => const Center(child: CircularProgressIndicator()),
+                                      );
+                                      await DataExportImportService().clearAllData();
+                                      Navigator.of(context).pop();
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Toutes les données ont été supprimées.'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                      widget.onSettingsChanged();
+                                    } catch (e) {
+                                      if (Navigator.canPop(context)) Navigator.of(context).pop();
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Erreur lors de la suppression: \\${e}'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                    }
+                                  }
+                                },
+                                icon: const Icon(Icons.delete_forever, color: Colors.red),
+                                label: const Text(
+                                  'Supprimer toutes les données',
+                                  style: TextStyle(color: Colors.red),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Colors.red, width: 2),
+                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.science,
-                            color: Theme.of(context).colorScheme.primary,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Données de test',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Générer des données de test complètes pour les captures d\'écran',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                try {
-                                  showDialog(
-                                    context: context,
-                                    barrierDismissible: false,
-                                    builder: (context) => const Center(child: CircularProgressIndicator()),
-                                  );
-                                  await TestDataGeneratorService.generateTestData();
-                                  Navigator.of(context).pop();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Données de test générées avec succès !'),
-                                      backgroundColor: Colors.green,
-                                    ),
-                                  );
-                                  widget.onSettingsChanged();
-                                } catch (e) {
-                                  if (Navigator.canPop(context)) Navigator.of(context).pop();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Erreur lors de la génération: $e'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                }
-                              },
-                              icon: const Icon(Icons.add_circle),
-                              label: const Text('Générer données de test'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                final confirmed = await showDialog<bool>(
-                                  context: context,
-                                  builder: (context) => AlertDialog(
-                                    title: const Text('Supprimer les données de test'),
-                                    content: const Text('Voulez-vous supprimer le flag des données de test ?'),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.of(context).pop(false),
-                                        child: const Text('Annuler'),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () => Navigator.of(context).pop(true),
-                                        child: const Text('Supprimer'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                                if (confirmed == true) {
-                                  await TestDataGeneratorService.clearTestData();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Flag des données de test supprimé'),
-                                      backgroundColor: Colors.orange,
-                                    ),
-                                  );
-                                }
-                              },
-                              icon: const Icon(Icons.clear, color: Colors.orange),
-                              label: const Text(
-                                'Supprimer flag',
-                                style: TextStyle(color: Colors.orange),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: Colors.orange, width: 1),
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-              ],
+                  const SizedBox(height: 20),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-        ],
+            const SizedBox(height: 20),
+          ],
+        ),
       ),
     );
   }

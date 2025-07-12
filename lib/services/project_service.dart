@@ -12,7 +12,6 @@ class ProjectService {
 
   // Getters pour accéder aux données
   List<Project> get projects => _storage.projects;
-  Project get defaultProject => _storage.getDefaultProject();
 
   // Initialisation (déjà fait par LocalStorageService)
   Future<void> initialize() async {
@@ -47,13 +46,11 @@ class ProjectService {
   Future<Project> createProject({
     required String name,
     required Color color,
-    bool isDefault = false,
   }) async {
     final project = Project(
       id: generateProjectId(),
       name: name,
       color: color,
-      isDefault: isDefault,
     );
 
     return await addProject(project);
@@ -160,12 +157,8 @@ class ProjectService {
     final project = getProject(projectId);
     if (project == null) return false;
     
-    // Le projet par défaut ne peut pas être supprimé
-    if (project.isDefault) return false;
-    
-    // Vérifier s'il y a des tâches dans ce projet
-    final projectTodos = _storage.getTodosByProject(projectId);
-    return projectTodos.isEmpty;
+    // Tous les projets peuvent être supprimés
+    return true;
   }
 
   // Déplacer toutes les tâches d'un projet vers un autre
@@ -192,7 +185,6 @@ class ProjectService {
     final targetProject = getProject(targetProjectId);
     
     if (sourceProject == null || targetProject == null) return false;
-    if (sourceProject.isDefault) return false; // Ne pas fusionner le projet par défaut
     
     // Déplacer toutes les tâches
     final success = await moveAllTodosToProject(sourceProjectId, targetProjectId);

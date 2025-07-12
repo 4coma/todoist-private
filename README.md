@@ -53,20 +53,20 @@ Une application de gestion de tâches moderne et intuitive développée avec Flu
 ## Captures d'écran
 
 ### Écran principal
-![Écran Principal](screenshots/main_screen.png)
+![Écran Principal](screenshots/liste.png)
 *Interface principale avec liste des tâches et sidebar des projets*
 
-### Gestion des tâches
-![Gestion des Tâches](screenshots/task_management.png)
-*Modal de création/édition de tâche avec sous-tâches*
+### Ajout de tâche
+![Ajout de Tâche](screenshots/ajout.png)
+*Modal de création de nouvelle tâche avec tous les champs*
 
-### Paramètres et thèmes
-![Paramètres](screenshots/settings.png)
-*Écran des paramètres avec sélection de thème*
+### Modification de tâche
+![Modification de Tâche](screenshots/modifications.png)
+*Interface de modification d'une tâche existante*
 
-### Notifications
-![Notifications](screenshots/notifications.png)
-*Système de notifications avec navigation directe*
+### Gestion des projets
+![Gestion des Projets](screenshots/projets.png)
+*Interface de gestion des projets avec création et modification*
 
 ## Installation
 

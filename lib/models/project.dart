@@ -4,7 +4,6 @@ class Project {
   final int id;
   final String name;
   final Color color;
-  final bool isDefault;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -12,7 +11,6 @@ class Project {
     required this.id,
     required this.name,
     required this.color,
-    required this.isDefault,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) : 
@@ -25,7 +23,6 @@ class Project {
       'id': id,
       'name': name,
       'color': color.value,
-      'isDefault': isDefault,
       'createdAt': createdAt.millisecondsSinceEpoch,
       'updatedAt': updatedAt.millisecondsSinceEpoch,
     };
@@ -37,7 +34,6 @@ class Project {
       id: map['id'],
       name: map['name'],
       color: Color(map['color']),
-      isDefault: map['isDefault'],
       createdAt: map['createdAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['createdAt']) : DateTime.now(),
       updatedAt: map['updatedAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['updatedAt']) : DateTime.now(),
     );
@@ -49,7 +45,6 @@ class Project {
       'id': id,
       'name': name,
       'color': color.value,
-      'isDefault': isDefault,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -61,7 +56,6 @@ class Project {
       id: json['id'] as int,
       name: json['name'] as String,
       color: Color(json['color'] as int),
-      isDefault: json['isDefault'] as bool,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );
@@ -72,7 +66,6 @@ class Project {
     int? id,
     String? name,
     Color? color,
-    bool? isDefault,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -80,7 +73,6 @@ class Project {
       id: id ?? this.id,
       name: name ?? this.name,
       color: color ?? this.color,
-      isDefault: isDefault ?? this.isDefault,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
     );
@@ -97,6 +89,6 @@ class Project {
 
   @override
   String toString() {
-    return 'Project{id: $id, name: $name, isDefault: $isDefault}';
+    return 'Project{id: $id, name: $name}';
   }
 } 

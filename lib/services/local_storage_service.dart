@@ -197,36 +197,36 @@ class LocalStorageService {
   // === GESTION DES PROJETS ===
 
   Future<void> _loadProjects() async {
+    print('🔄 LocalStorageService._loadProjects(): Début du chargement des projets...');
     try {
       final prefs = await SharedPreferences.getInstance();
       final projectsJson = prefs.getString(_projectsKey);
+      print('🔄 LocalStorageService._loadProjects(): Données JSON trouvées: ${projectsJson != null ? 'Oui' : 'Non'}');
+      
       if (projectsJson != null) {
+        print('🔄 LocalStorageService._loadProjects(): Déchiffrement des données...');
         final decryptedData = _decryptData(projectsJson);
+        print('🔄 LocalStorageService._loadProjects(): Données déchiffrées: ${decryptedData.length} caractères');
+        
         final List<dynamic> projectsList = jsonDecode(decryptedData);
+        print('🔄 LocalStorageService._loadProjects(): ${projectsList.length} projets trouvés dans les données');
+        
         _projects = projectsList.map((map) => Project.fromMap(map)).toList();
-        print('✅ LocalStorageService: ${_projects.length} projets chargés');
+        print('✅ LocalStorageService._loadProjects(): ${_projects.length} projets chargés avec succès');
+        print('🔄 LocalStorageService._loadProjects(): Détails des projets chargés:');
+        for (int i = 0; i < _projects.length; i++) {
+          print('   - Projet $i: ${_projects[i].name} (ID: ${_projects[i].id})');
+        }
       } else {
-        // Projet par défaut si aucun projet n'existe
-        _projects = [
-          Project(
-            id: 1,
-            name: 'Personnel',
-            color: Colors.blue,
-            isDefault: true,
-          ),
-        ];
-        await _saveProjects();
+        print('⚠️ LocalStorageService._loadProjects(): Aucune donnée trouvée, liste vide créée');
+        _projects = [];
+        print('✅ LocalStorageService._loadProjects(): Liste de projets vide créée');
       }
     } catch (e) {
-      print('❌ Erreur lors du chargement des projets: $e');
-      _projects = [
-        Project(
-          id: 1,
-          name: 'Personnel',
-          color: Colors.blue,
-          isDefault: true,
-        ),
-      ];
+      print('❌ LocalStorageService._loadProjects(): Erreur lors du chargement des projets: $e');
+      print('🔄 LocalStorageService._loadProjects(): Création d\'une liste vide en cas d\'erreur');
+      _projects = [];
+      print('✅ LocalStorageService._loadProjects(): Liste de projets vide créée après erreur');
     }
   }
 
@@ -249,7 +249,6 @@ class LocalStorageService {
       id: project.id,
       name: project.name,
       color: project.color,
-      isDefault: project.isDefault,
     );
 
     _projects.add(newProject);
@@ -267,7 +266,6 @@ class LocalStorageService {
       id: oldProject.id,
       name: updates['name'] ?? oldProject.name,
       color: updates['color'] ?? oldProject.color,
-      isDefault: updates['isDefault'] ?? oldProject.isDefault,
     );
 
     _projects[index] = updatedProject;
@@ -277,41 +275,37 @@ class LocalStorageService {
   }
 
   Future<bool> deleteProject(int id) async {
+    print('🔄 LocalStorageService.deleteProject(): Début de la suppression du projet ID: $id');
+    print('🔄 LocalStorageService.deleteProject(): Nombre de projets actuel: ${_projects.length}');
+    print('🔄 LocalStorageService.deleteProject(): Projets disponibles: ${_projects.map((p) => '${p.name}(ID:${p.id})').join(', ')}');
+    
     final index = _projects.indexWhere((p) => p.id == id);
-    if (index == -1) return false;
-
-    // Vérifier que ce n'est pas le projet par défaut
-    if (_projects[index].isDefault) {
-      print('❌ LocalStorageService: Impossible de supprimer le projet par défaut');
+    if (index == -1) {
+      print('❌ LocalStorageService.deleteProject(): Projet non trouvé avec ID: $id');
       return false;
     }
 
-    // Déplacer toutes les tâches vers le projet par défaut
-    final defaultProject = _projects.firstWhere((p) => p.isDefault);
-    for (int i = 0; i < _todos.length; i++) {
-      if (_todos[i].projectId == id) {
-        _todos[i] = TodoItem(
-          id: _todos[i].id,
-          title: _todos[i].title,
-          description: _todos[i].description,
-          dueDate: _todos[i].dueDate,
-          priority: _todos[i].priority,
-          projectId: defaultProject.id,
-          isCompleted: _todos[i].isCompleted,
-          parentId: _todos[i].parentId,
-          level: _todos[i].level,
-          reminder: _todos[i].reminder,
-          estimatedMinutes: _todos[i].estimatedMinutes,
-          elapsedMinutes: _todos[i].elapsedMinutes,
-          elapsedSeconds: _todos[i].elapsedSeconds,
-        );
-      }
-    }
+    final projectToDelete = _projects[index];
+    print('🔄 LocalStorageService.deleteProject(): Projet à supprimer: ${projectToDelete.name} (ID: ${projectToDelete.id})');
 
+    // Supprimer toutes les tâches associées à ce projet
+    print('🔄 LocalStorageService.deleteProject(): Suppression des tâches associées...');
+    int deletedTasksCount = 0;
+    _todos.removeWhere((todo) {
+      if (todo.projectId == id) {
+        print('🔄 LocalStorageService.deleteProject(): Suppression de la tâche: ${todo.title}');
+        deletedTasksCount++;
+        return true;
+      }
+      return false;
+    });
+    print('✅ LocalStorageService.deleteProject(): $deletedTasksCount tâches supprimées');
+
+    // Supprimer le projet
     _projects.removeAt(index);
     await _saveProjects();
     await _saveTodos();
-    print('✅ LocalStorageService: Projet supprimé (ID: $id)');
+    print('✅ LocalStorageService.deleteProject(): Projet supprimé avec succès (ID: $id)');
     return true;
   }
 
@@ -323,9 +317,7 @@ class LocalStorageService {
     }
   }
 
-  Project getDefaultProject() {
-    return _projects.firstWhere((p) => p.isDefault);
-  }
+
 
   // === GESTION DES PRÉFÉRENCES ===
 
@@ -516,4 +508,6 @@ class LocalStorageService {
     await _saveProjects();
     print('✅ LocalStorageService: Tous les projets mis à jour');
   }
+
+
 } 

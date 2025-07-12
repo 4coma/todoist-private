@@ -57,7 +57,7 @@ class DataExportImportService {
               id: DateTime.now().millisecondsSinceEpoch + projectsList.indexOf(projectJson),
               name: originalProject.name,
               color: originalProject.color,
-              isDefault: originalProject.isDefault,
+
               createdAt: originalProject.createdAt,
               updatedAt: originalProject.updatedAt,
             );
