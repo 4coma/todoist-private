@@ -473,6 +473,16 @@ class _TodoHomePageState extends State<TodoHomePage> {
             );
           }
         }
+
+        // Afficher un toast de confirmation
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Tâche "${newTodo.title}" ajoutée'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
       }
     });
   }
@@ -1914,6 +1924,16 @@ class _AddTodoModalState extends State<AddTodoModal> {
         );
         _subTasks.add(subTask);
         _subTaskController.clear();
+
+        // Afficher un toast de confirmation
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Sous-tâche "${subTask.title}" ajoutée'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
       });
     }
   }
@@ -2345,9 +2365,19 @@ class _EditTodoModalState extends State<EditTodoModal> {
         
         // Sauvegarder immédiatement
         widget.homeState._saveData();
-        
+
         _subTaskController.clear();
         debugPrint('✅ _addSubTask(): Sous-tâche "${subTask.title}" ajoutée et sauvegardée');
+
+        // Afficher un toast de confirmation
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Sous-tâche "${subTask.title}" ajoutée'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
       } catch (e) {
         debugPrint('❌ _addSubTask(): Erreur lors de l\'ajout de la sous-tâche: $e');
         ScaffoldMessenger.of(context).showSnackBar(
