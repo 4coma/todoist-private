@@ -840,10 +840,93 @@ class _TodoHomePageState extends State<TodoHomePage> {
     if (!parentTask.canHaveSubTasks) {
       throw Exception('Impossible d\'ajouter une sous-tâche au-delà du niveau 3');
     }
-    
+
     setState(() {
       _todos.add(subTask);
     });
+  }
+
+  // Vérifie si taskId est un descendant de potentialAncestorId
+  bool _isDescendant(int potentialAncestorId, int taskId) {
+    TodoItem? current;
+    try {
+      current = _todos.firstWhere((t) => t.id == taskId);
+    } catch (_) {
+      return false;
+    }
+    while (current?.parentId != null) {
+      if (current!.parentId == potentialAncestorId) return true;
+      try {
+        current = _todos.firstWhere((t) => t.id == current!.parentId);
+      } catch (_) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  // Récupère le niveau le plus profond d'une tâche et de ses descendants
+  int _getDeepestLevel(int taskId) {
+    int deepest = _todos.firstWhere((t) => t.id == taskId).level;
+    for (final sub in _getAllSubTasks(taskId)) {
+      if (sub.level > deepest) deepest = sub.level;
+    }
+    return deepest;
+  }
+
+  // Déplace une tâche sous une autre en mettant à jour le niveau de toutes les sous-tâches
+  void _moveTaskToParent(int taskId, int newParentId) {
+    final taskIndex = _todos.indexWhere((t) => t.id == taskId);
+    final parentIndex = _todos.indexWhere((t) => t.id == newParentId);
+    if (taskIndex == -1 || parentIndex == -1) return;
+
+    final task = _todos[taskIndex];
+    final newParent = _todos[parentIndex];
+
+    final deepestLevel = _getDeepestLevel(taskId);
+    final relativeDepth = deepestLevel - task.level;
+    final newLevel = newParent.level + 1;
+
+    if (newLevel + relativeDepth > 3) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Niveau maximum de sous-tâches atteint')),
+      );
+      return;
+    }
+
+    final levelDiff = newLevel - task.level;
+
+    setState(() {
+      _todos[taskIndex] = task.copyWith(parentId: newParent.id, level: newLevel);
+
+      for (final sub in _getAllSubTasks(taskId)) {
+        final idx = _todos.indexWhere((t) => t.id == sub.id);
+        if (idx != -1) {
+          _todos[idx] = sub.copyWith(level: sub.level + levelDiff);
+        }
+      }
+    });
+
+    _saveData();
+  }
+
+  // Widget utilisé comme aperçu lors du déplacement d'une tâche
+  Widget _buildDragFeedback(TodoItem todo) {
+    return Material(
+      color: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 250),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Text(
+              todo.title,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ),
+    );
   }
   
   // Méthode pour construire un élément de sous-tâche indenté
@@ -852,7 +935,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
     final isExpanded = _expandedTasks.contains(subTask.id);
     final nestedSubTasks = isExpanded ? _getSubTasks(subTask.id) : [];
     
-    return Column(
+    Widget itemContent = Column(
       children: [
         Card(
           margin: EdgeInsets.only(
@@ -1025,6 +1108,22 @@ class _TodoHomePageState extends State<TodoHomePage> {
         if (isExpanded && nestedSubTasks.isNotEmpty)
           ...nestedSubTasks.map((nestedSubTask) => _buildSubTaskItem(nestedSubTask, subTask.id)),
       ],
+    );
+
+    return DragTarget<TodoItem>(
+      onWillAccept: (dragged) {
+        if (dragged == null) return false;
+        return dragged.id != subTask.id && !_isDescendant(dragged.id, subTask.id) && subTask.canHaveSubTasks && (subTask.level + 1 + (_getDeepestLevel(dragged.id) - dragged.level) <= 3);
+      },
+      onAccept: (dragged) => _moveTaskToParent(dragged.id, subTask.id),
+      builder: (context, candidate, rejected) {
+        return LongPressDraggable<TodoItem>(
+          data: subTask,
+          feedback: _buildDragFeedback(subTask),
+          childWhenDragging: Opacity(opacity: 0.5, child: itemContent),
+          child: itemContent,
+        );
+      },
     );
   }
 
@@ -1607,7 +1706,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
                       final isExpanded = _expandedTasks.contains(todo.id);
                       final subTasks = isExpanded ? _getSubTasks(todo.id) : [];
                       
-                      return Column(
+                      Widget itemContent = Column(
                         children: [
                           Card(
                             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -1770,6 +1869,22 @@ class _TodoHomePageState extends State<TodoHomePage> {
                           if (isExpanded && subTasks.isNotEmpty)
                             ...subTasks.map((subTask) => _buildSubTaskItem(subTask, todo.id)),
                         ],
+                      );
+
+                      return DragTarget<TodoItem>(
+                        onWillAccept: (dragged) {
+                          if (dragged == null) return false;
+                          return dragged.id != todo.id && !_isDescendant(dragged.id, todo.id) && todo.canHaveSubTasks && (todo.level + 1 + (_getDeepestLevel(dragged.id) - dragged.level) <= 3);
+                        },
+                        onAccept: (dragged) => _moveTaskToParent(dragged.id, todo.id),
+                        builder: (context, candidate, rejected) {
+                          return LongPressDraggable<TodoItem>(
+                            data: todo,
+                            feedback: _buildDragFeedback(todo),
+                            childWhenDragging: Opacity(opacity: 0.5, child: itemContent),
+                            child: itemContent,
+                          );
+                        },
                       );
                     },
                   ),
