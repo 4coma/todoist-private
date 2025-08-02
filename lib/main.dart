@@ -427,7 +427,10 @@ class _TodoHomePageState extends State<TodoHomePage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => AddTodoModal(projects: _projects),
+      builder: (context) => AddTodoModal(
+        projects: _projects,
+        selectedProject: _selectedProject, // Passer le projet sélectionné
+      ),
     ).then((result) async {
       if (result != null && result['todo'] != null) {
         final newTodo = result['todo'] as TodoItem;
@@ -790,10 +793,94 @@ class _TodoHomePageState extends State<TodoHomePage> {
   }
 
   void _toggleTodo(int id) async {
+    final todo = _todos.firstWhere((todo) => todo.id == id);
+    final wasCompleted = todo.isCompleted;
+    final isNowCompleted = !wasCompleted;
+    
+    // Si on marque comme terminée, ajouter les effets spéciaux
+    if (isNowCompleted) {
+      // Afficher le toast avec bouton d'annulation
+      if (mounted) {
+        final scaffoldMessenger = ScaffoldMessenger.of(context);
+        final snackBar = SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                Icons.check_circle,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Tâche "${todo.title}" marquée comme terminée',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          margin: const EdgeInsets.all(16),
+          action: SnackBarAction(
+            label: 'Annuler',
+            textColor: Colors.white,
+            onPressed: () {
+              // Annuler l'action
+              setState(() {
+                todo.isCompleted = false;
+              });
+              _saveData();
+              
+              // Afficher un toast de confirmation d'annulation
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: [
+                      Icon(
+                        Icons.undo,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Action annulée pour "${todo.title}"',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  backgroundColor: Colors.orange,
+                  duration: const Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  margin: const EdgeInsets.all(16),
+                ),
+              );
+            },
+          ),
+        );
+        
+        scaffoldMessenger.showSnackBar(snackBar);
+      }
+    }
+    
     setState(() {
       try {
-        final todo = _todos.firstWhere((todo) => todo.id == id);
-        todo.isCompleted = !todo.isCompleted;
+        todo.isCompleted = isNowCompleted;
         
         // Si la tâche est marquée comme terminée et qu'elle est récurrente, créer une nouvelle occurrence
         if (todo.isCompleted && todo.isRecurring && todo.recurrenceTime != null) {
@@ -1053,13 +1140,19 @@ class _TodoHomePageState extends State<TodoHomePage> {
     
     Widget itemContent = Column(
       children: [
-        Card(
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
           margin: EdgeInsets.only(
             left: 32.0 * subTask.level, // Indentation basée sur le niveau
             right: 16.0,
             top: 2.0,
             bottom: 2.0,
           ),
+          child: AnimatedOpacity(
+            opacity: subTask.isCompleted ? 0.6 : 1.0,
+            duration: const Duration(milliseconds: 300),
+            child: Card(
+              elevation: subTask.isCompleted ? 1 : 2,
           child: InkWell(
             onTap: () => _editTodo(subTask),
             child: ListTile(
@@ -1257,6 +1350,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
               ),
             ),
           ),
+        ),
+        ),
         ),
         // Afficher les sous-tâches imbriquées si la tâche est dépliée
         if (isExpanded && nestedSubTasks.isNotEmpty)
@@ -1976,9 +2071,20 @@ class _TodoHomePageState extends State<TodoHomePage> {
                       
                       Widget itemContent = Column(
                         children: [
-                          Card(
-                            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                            child: ListTile(
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            margin: EdgeInsets.only(
+                              left: 0, // Tâches principales complètement à gauche
+                              right: 16.0,
+                              top: 4.0,
+                              bottom: 4.0,
+                            ),
+                            child: AnimatedOpacity(
+                              opacity: todo.isCompleted ? 0.6 : 1.0,
+                              duration: const Duration(milliseconds: 300),
+                              child: Card(
+                                elevation: todo.isCompleted ? 1 : 2,
+                                child: ListTile(
                               contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                               leading: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -2172,6 +2278,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
                               onTap: () => _editTodo(todo),
                             ),
                           ),
+                        ),
+                      ),
                           if (isExpanded && subTasks.isNotEmpty)
                             ...subTasks.map((subTask) => _buildSubTaskItem(subTask, todo.id)),
                         ],
@@ -2346,8 +2454,13 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
 class AddTodoModal extends StatefulWidget {
   final List<Project> projects;
+  final Project? selectedProject; // Projet sélectionné par défaut
   
-  const AddTodoModal({super.key, required this.projects});
+  const AddTodoModal({
+    super.key, 
+    required this.projects,
+    this.selectedProject, // Projet sélectionné par défaut
+  });
 
   @override
   State<AddTodoModal> createState() => _AddTodoModalState();
@@ -2369,7 +2482,8 @@ class _AddTodoModalState extends State<AddTodoModal> {
   @override
   void initState() {
     super.initState();
-    _selectedProject = widget.projects.isNotEmpty ? widget.projects.first : null;
+    // Utiliser le projet sélectionné par défaut, sinon le premier projet disponible
+    _selectedProject = widget.selectedProject ?? (widget.projects.isNotEmpty ? widget.projects.first : null);
   }
 
   void _addSubTask() {
