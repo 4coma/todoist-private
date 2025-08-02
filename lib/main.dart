@@ -828,6 +828,24 @@ class _TodoHomePageState extends State<TodoHomePage> {
     return _todos.where((todo) => todo.parentId == parentId).toList();
   }
 
+  // Sous-tâches à afficher selon les préférences
+  List<TodoItem> _getVisibleSubTasks(int parentId) {
+    final subTasks = _getSubTasks(parentId);
+
+    if (_showCompletedTasks) {
+      // En mode "Tâches achevées", n'afficher que les sous-tâches terminées
+      return subTasks.where((t) => t.isCompleted).toList();
+    }
+
+    if (_showCompletedTasksInProjects) {
+      // Option activée : afficher toutes les sous-tâches
+      return subTasks;
+    }
+
+    // Option désactivée : masquer les sous-tâches terminées
+    return subTasks.where((t) => !t.isCompleted).toList();
+  }
+
   List<TodoItem> _getAllSubTasks(int parentId) {
     List<TodoItem> allSubTasks = [];
     List<int> toProcess = [parentId];
@@ -941,9 +959,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
   
   // Méthode pour construire un élément de sous-tâche indenté
   Widget _buildSubTaskItem(TodoItem subTask, int parentId) {
-    final hasNestedSubTasks = _hasSubTasks(subTask.id);
+    final hasNestedSubTasks = _getVisibleSubTasks(subTask.id).isNotEmpty;
     final isExpanded = _expandedTasks.contains(subTask.id);
-    final nestedSubTasks = isExpanded ? _getSubTasks(subTask.id) : [];
+    final nestedSubTasks = isExpanded ? _getVisibleSubTasks(subTask.id) : [];
     
     Widget itemContent = Column(
       children: [
@@ -1075,7 +1093,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              '${_getSubTasks(subTask.id).length} sous-tâches',
+                              '${_getVisibleSubTasks(subTask.id).length} sous-tâches',
                               style: TextStyle(fontSize: 12, color: Colors.purple),
                             ),
                           ),
@@ -1712,9 +1730,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
                           todo.dueDate!.isBefore(DateTime.now()) && 
                           !todo.isCompleted;
                       
-                      final hasSubTasks = _hasSubTasks(todo.id);
+                      final hasSubTasks = _getVisibleSubTasks(todo.id).isNotEmpty;
                       final isExpanded = _expandedTasks.contains(todo.id);
-                      final subTasks = isExpanded ? _getSubTasks(todo.id) : [];
+                      final subTasks = isExpanded ? _getVisibleSubTasks(todo.id) : [];
                       
                       Widget itemContent = Column(
                         children: [
@@ -1839,7 +1857,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
                                               borderRadius: BorderRadius.circular(12),
                                             ),
                                             child: Text(
-                                              '${_getSubTasks(todo.id).length} sous-tâches',
+                                              '${_getVisibleSubTasks(todo.id).length} sous-tâches',
                                               style: TextStyle(fontSize: 12, color: Colors.purple),
                                             ),
                                           ),
