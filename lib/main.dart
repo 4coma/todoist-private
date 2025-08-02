@@ -291,8 +291,14 @@ class _TodoHomePageState extends State<TodoHomePage> {
       });
       debugPrint('✅ _loadData(): ${_todos.length} tâches chargées');
 
+      // Charger les paramètres utilisateur
+      await _loadSettings();
+
       // Reprogrammer les notifications pour les tâches avec rappel
       await _rescheduleNotifications();
+      
+      // Forcer la mise à jour de l'interface
+      setState(() {});
       
       debugPrint('✅ _loadData(): Données chargées avec succès - ${_projects.length} projets, ${_todos.length} tâches');
     } catch (e) {
@@ -938,6 +944,47 @@ class _TodoHomePageState extends State<TodoHomePage> {
     _saveData();
   }
 
+  // Remonte une tâche au niveau supérieur (supprime le parent)
+  void _moveTaskToRoot(int taskId) {
+    final taskIndex = _todos.indexWhere((t) => t.id == taskId);
+    if (taskIndex == -1) return;
+
+    final task = _todos[taskIndex];
+    if (task.parentId == null) return; // Déjà au niveau racine
+
+    debugPrint('🔍 === REMONTÉE TÂCHE AU RACINE ===');
+    debugPrint('🔍 Tâche à remonter: ${task.title} (ID: $taskId)');
+    debugPrint('🔍 Ancien parentId: ${task.parentId}');
+    debugPrint('🔍 Ancien niveau: ${task.level}');
+
+    final currentLevel = task.level;
+    final levelDiff = currentLevel - 0; // Remonter au niveau 0
+
+    setState(() {
+      _todos[taskIndex] = task.copyWith(parentId: null, level: 0);
+      debugPrint('✅ Tâche remontée: parentId = null, level = 0');
+
+      // Remonter toutes les sous-tâches et mettre à jour leur parentId
+      for (final sub in _getAllSubTasks(taskId)) {
+        final idx = _todos.indexWhere((t) => t.id == sub.id);
+        if (idx != -1) {
+          // Si la sous-tâche avait cette tâche comme parent, elle devient racine
+          if (sub.parentId == taskId) {
+            _todos[idx] = sub.copyWith(parentId: null, level: sub.level - levelDiff);
+            debugPrint('✅ Sous-tâche ${sub.title} devient racine (parentId = null)');
+          } else {
+            // Sinon, juste ajuster le niveau
+            _todos[idx] = sub.copyWith(level: sub.level - levelDiff);
+            debugPrint('✅ Sous-tâche ${sub.title} niveau ajusté: ${sub.level} -> ${sub.level - levelDiff}');
+          }
+        }
+      }
+    });
+
+    debugPrint('🔍 === FIN REMONTÉE ===');
+    _saveData();
+  }
+
   // Widget utilisé comme aperçu lors du déplacement d'une tâche
   Widget _buildDragFeedback(TodoItem todo) {
     return Material(
@@ -983,16 +1030,33 @@ class _TodoHomePageState extends State<TodoHomePage> {
               title: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Titre sur la première ligne
-                  Text(
-                    subTask.title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
-                      color: subTask.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+                  // Titre sur la première ligne avec icône de description
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          subTask.title,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
+                            color: subTask.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
+                          ),
+                          maxLines: 3, // Permettre jusqu'à 3 lignes
+                          overflow: TextOverflow.visible, // Ne pas tronquer
+                        ),
+                      ),
+                      if (subTask.description.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8, top: 2),
+                          child: Icon(
+                            Icons.description,
+                            size: 16,
+                            color: Theme.of(context).hintColor,
+                          ),
+                        ),
+                    ],
                   ),
                   // Dates sur la deuxième ligne
                   if (subTask.dueDate != null || subTask.reminder != null)
@@ -1138,20 +1202,78 @@ class _TodoHomePageState extends State<TodoHomePage> {
       ],
     );
 
-    return DragTarget<TodoItem>(
-      onWillAccept: (dragged) {
-        if (dragged == null) return false;
-        return dragged.id != subTask.id && !_isDescendant(dragged.id, subTask.id) && subTask.canHaveSubTasks && (subTask.level + 1 + (_getDeepestLevel(dragged.id) - dragged.level) <= 3);
-      },
-      onAccept: (dragged) => _moveTaskToParent(dragged.id, subTask.id),
-      builder: (context, candidate, rejected) {
-        return LongPressDraggable<TodoItem>(
-          data: subTask,
-          feedback: _buildDragFeedback(subTask),
-          childWhenDragging: Opacity(opacity: 0.5, child: itemContent),
-          child: itemContent,
-        );
-      },
+    return Column(
+      children: [
+        // Zone de drop pour remonter une tâche au niveau supérieur
+        if (subTask.parentId != null)
+          DragTarget<TodoItem>(
+            onWillAccept: (dragged) {
+              if (dragged == null) return false;
+              return dragged.id != subTask.id && !_isDescendant(dragged.id, subTask.id);
+            },
+            onAccept: (dragged) => _moveTaskToRoot(dragged.id),
+            builder: (context, candidate, rejected) {
+              return Container(
+                height: 16,
+                margin: EdgeInsets.only(
+                  left: 32.0 * subTask.level + 16,
+                  right: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: candidate.isNotEmpty 
+                    ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
+                    : Colors.transparent,
+                  borderRadius: BorderRadius.circular(4),
+                  border: candidate.isNotEmpty
+                    ? Border.all(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 2,
+                      )
+                    : null,
+                ),
+                child: candidate.isNotEmpty
+                  ? Center(
+                      child: Text(
+                        'Remonter au niveau supérieur',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    )
+                  : null,
+              );
+            },
+          ),
+        // Zone de drop pour déplacer une tâche sous cette sous-tâche
+        DragTarget<TodoItem>(
+          onWillAccept: (dragged) {
+            if (dragged == null) return false;
+            return dragged.id != subTask.id && !_isDescendant(dragged.id, subTask.id) && subTask.canHaveSubTasks && (subTask.level + 1 + (_getDeepestLevel(dragged.id) - dragged.level) <= 3);
+          },
+          onAccept: (dragged) => _moveTaskToParent(dragged.id, subTask.id),
+          builder: (context, candidate, rejected) {
+            return LongPressDraggable<TodoItem>(
+              data: subTask,
+              feedback: _buildDragFeedback(subTask),
+              childWhenDragging: Opacity(opacity: 0.5, child: itemContent),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: candidate.isNotEmpty
+                    ? Border.all(
+                        color: Theme.of(context).colorScheme.secondary,
+                        width: 2,
+                      )
+                    : null,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: itemContent,
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -1476,15 +1598,22 @@ class _TodoHomePageState extends State<TodoHomePage> {
   List<TodoItem> get _filteredTodos {
     List<TodoItem> filtered;
     
+    debugPrint('🔍 [FILTRAGE] _showCompletedTasksInProjects = $_showCompletedTasksInProjects');
+    debugPrint('🔍 [FILTRAGE] _showCompletedTasks = $_showCompletedTasks');
+    debugPrint('🔍 [FILTRAGE] _selectedProject = ${_selectedProject?.name ?? "null"}');
+    
     if (_showCompletedTasks) {
       // Mode "Tâches achevées" - afficher seulement les tâches terminées
       filtered = _todos.where((todo) => todo.isCompleted && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTRAGE] Mode tâches achevées: ${filtered.length} tâches');
     } else if (_selectedProject == null) {
       // Vue "Toutes les tâches" - afficher les tâches non terminées (ou toutes si l'option est activée)
       filtered = _todos.where((todo) => (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTRAGE] Vue toutes les tâches: ${filtered.length} tâches (showCompletedTasksInProjects: $_showCompletedTasksInProjects)');
     } else {
       // Vue projet spécifique - afficher les tâches du projet (non terminées ou toutes si l'option est activée)
       filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTRAGE] Vue projet ${_selectedProject!.name}: ${filtered.length} tâches (showCompletedTasksInProjects: $_showCompletedTasksInProjects)');
     }
     
     // Appliquer le tri
@@ -1704,6 +1833,55 @@ class _TodoHomePageState extends State<TodoHomePage> {
               ],
             ),
           ),
+          // Zone de drop générale pour remettre une tâche au niveau racine
+          DragTarget<TodoItem>(
+            onWillAccept: (dragged) {
+              if (dragged == null) return false;
+              return dragged.parentId != null; // Seulement si la tâche a un parent
+            },
+            onAccept: (dragged) => _moveTaskToRoot(dragged.id),
+            builder: (context, candidate, rejected) {
+              return Container(
+                height: candidate.isNotEmpty ? 40 : 0,
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: candidate.isNotEmpty 
+                    ? Theme.of(context).colorScheme.primary.withOpacity(0.2)
+                    : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: candidate.isNotEmpty
+                    ? Border.all(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 2,
+                      )
+                    : null,
+                ),
+                child: candidate.isNotEmpty
+                  ? Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.keyboard_arrow_up,
+                            color: Theme.of(context).colorScheme.primary,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Remettre au niveau principal',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : null,
+              );
+            },
+          ),
           // Liste des tâches
           Expanded(
             child: _filteredTodos.isEmpty
@@ -1747,16 +1925,33 @@ class _TodoHomePageState extends State<TodoHomePage> {
                               title: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // Titre sur la première ligne
-                                  Text(
-                                    todo.title,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                      decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
-                                      color: todo.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
+                                  // Titre sur la première ligne avec icône de description
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          todo.title,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
+                                            color: todo.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
+                                          ),
+                                          maxLines: 3, // Permettre jusqu'à 3 lignes
+                                          overflow: TextOverflow.visible, // Ne pas tronquer
+                                        ),
+                                      ),
+                                      if (todo.description.isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 8, top: 2),
+                                          child: Icon(
+                                            Icons.description,
+                                            size: 16,
+                                            color: Theme.of(context).hintColor,
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                   // Dates sur la deuxième ligne
                                   if (todo.dueDate != null || todo.reminder != null)
@@ -1899,20 +2094,75 @@ class _TodoHomePageState extends State<TodoHomePage> {
                         ],
                       );
 
-                      return DragTarget<TodoItem>(
-                        onWillAccept: (dragged) {
-                          if (dragged == null) return false;
-                          return dragged.id != todo.id && !_isDescendant(dragged.id, todo.id) && todo.canHaveSubTasks && (todo.level + 1 + (_getDeepestLevel(dragged.id) - dragged.level) <= 3);
-                        },
-                        onAccept: (dragged) => _moveTaskToParent(dragged.id, todo.id),
-                        builder: (context, candidate, rejected) {
-                          return LongPressDraggable<TodoItem>(
-                            data: todo,
-                            feedback: _buildDragFeedback(todo),
-                            childWhenDragging: Opacity(opacity: 0.5, child: itemContent),
-                            child: itemContent,
-                          );
-                        },
+                      return Column(
+                        children: [
+                          // Zone de drop pour remonter une tâche au niveau supérieur
+                          if (todo.parentId != null)
+                            DragTarget<TodoItem>(
+                              onWillAccept: (dragged) {
+                                if (dragged == null) return false;
+                                return dragged.id != todo.id && !_isDescendant(dragged.id, todo.id);
+                              },
+                              onAccept: (dragged) => _moveTaskToRoot(dragged.id),
+                              builder: (context, candidate, rejected) {
+                                return Container(
+                                  height: 20,
+                                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                                  decoration: BoxDecoration(
+                                    color: candidate.isNotEmpty 
+                                      ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
+                                      : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: candidate.isNotEmpty
+                                      ? Border.all(
+                                          color: Theme.of(context).colorScheme.primary,
+                                          width: 2,
+                                        )
+                                      : null,
+                                  ),
+                                  child: candidate.isNotEmpty
+                                    ? Center(
+                                        child: Text(
+                                          'Remonter au niveau supérieur',
+                                          style: TextStyle(
+                                            color: Theme.of(context).colorScheme.primary,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      )
+                                    : null,
+                                );
+                              },
+                            ),
+                          // Zone de drop pour déplacer une tâche sous cette tâche
+                          DragTarget<TodoItem>(
+                            onWillAccept: (dragged) {
+                              if (dragged == null) return false;
+                              return dragged.id != todo.id && !_isDescendant(dragged.id, todo.id) && todo.canHaveSubTasks && (todo.level + 1 + (_getDeepestLevel(dragged.id) - dragged.level) <= 3);
+                            },
+                            onAccept: (dragged) => _moveTaskToParent(dragged.id, todo.id),
+                            builder: (context, candidate, rejected) {
+                              return LongPressDraggable<TodoItem>(
+                                data: todo,
+                                feedback: _buildDragFeedback(todo),
+                                childWhenDragging: Opacity(opacity: 0.5, child: itemContent),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border: candidate.isNotEmpty
+                                      ? Border.all(
+                                          color: Theme.of(context).colorScheme.secondary,
+                                          width: 2,
+                                        )
+                                      : null,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: itemContent,
+                                ),
+                              );
+                            },
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -2149,10 +2399,19 @@ class _AddTodoModalState extends State<AddTodoModal> {
               // Titre
               TextField(
                 controller: _titleController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Titre de la tâche *',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  helperText: '${_titleController.text.length}/200 caractères',
+                  errorText: _titleController.text.length > 200 
+                    ? 'Le titre ne peut pas dépasser 200 caractères'
+                    : null,
                 ),
+                onChanged: (value) {
+                  setState(() {
+                    // Forcer la mise à jour pour afficher le compteur
+                  });
+                },
               ),
               const SizedBox(height: 16),
               // Description
@@ -2360,9 +2619,17 @@ class _AddTodoModalState extends State<AddTodoModal> {
                   const SizedBox(width: 16),
                   Expanded(
                     child: ElevatedButton(
-                        onPressed: _titleController.text.trim().isEmpty
+                        onPressed: _titleController.text.trim().isEmpty || _titleController.text.length > 200
                             ? null
                             : () {
+                                // Validation de la longueur du titre
+                                if (_titleController.text.length > 200) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Le titre ne peut pas dépasser 200 caractères')),
+                                  );
+                                  return;
+                                }
+                                
                                 // Parser le temps estimé
                                 int? estimatedMinutes;
                                 if (_estimatedTimeController.text.trim().isNotEmpty) {
@@ -2614,10 +2881,19 @@ class _EditTodoModalState extends State<EditTodoModal> {
               // Titre
               TextField(
                 controller: _titleController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Titre de la tâche *',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  helperText: '${_titleController.text.length}/200 caractères',
+                  errorText: _titleController.text.length > 200 
+                    ? 'Le titre ne peut pas dépasser 200 caractères'
+                    : null,
                 ),
+                onChanged: (value) {
+                  setState(() {
+                    // Forcer la mise à jour pour afficher le compteur
+                  });
+                },
               ),
               const SizedBox(height: 16),
               
@@ -3044,6 +3320,14 @@ class _EditTodoModalState extends State<EditTodoModal> {
     if (_titleController.text.trim().isEmpty) {
       debugPrint('❌ _saveChanges(): Titre vide, sauvegarde annulée');
       return; // Ne pas sauvegarder si le titre est vide
+    }
+    
+    if (_titleController.text.length > 200) {
+      debugPrint('❌ _saveChanges(): Titre trop long (${_titleController.text.length} caractères), sauvegarde annulée');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Le titre ne peut pas dépasser 200 caractères')),
+      );
+      return; // Ne pas sauvegarder si le titre est trop long
     }
     
     int? estimatedMinutes;
@@ -3500,6 +3784,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _showCompletedTasksInProjects = value;
     });
     debugPrint('✅ [SettingsScreen] Préférence sauvegardée: show_completed_tasks = $value');
+    widget.onSettingsChanged();
+    
+    // Forcer la mise à jour de la variable dans la classe principale
+    widget.onDataReload();
+    
+    // Forcer la mise à jour de l'interface
     widget.onSettingsChanged();
   }
 
