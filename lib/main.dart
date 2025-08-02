@@ -495,7 +495,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   void _openEditModal(TodoItem todo) {
     debugPrint('🟢 [_openEditModal] Ouverture du modal pour: ${todo.title} (niveau ${todo.level})');
-    final subTasks = _getSubTasks(todo.id);
+    final subTasks = _getVisibleSubTasks(todo.id);
     debugPrint('🟢 [_openEditModal] Sous-tâches trouvées: ${subTasks.length}');
     
     showModalBottomSheet(
@@ -794,6 +794,47 @@ class _TodoHomePageState extends State<TodoHomePage> {
       try {
         final todo = _todos.firstWhere((todo) => todo.id == id);
         todo.isCompleted = !todo.isCompleted;
+        
+        // Si la tâche est marquée comme terminée et qu'elle est récurrente, créer une nouvelle occurrence
+        if (todo.isCompleted && todo.isRecurring && todo.recurrenceTime != null) {
+          final nextOccurrence = todo.getNextOccurrence();
+          if (nextOccurrence != null) {
+            final newTodo = TodoItem(
+              id: DateTime.now().millisecondsSinceEpoch,
+              title: todo.title,
+              description: todo.description,
+              dueDate: nextOccurrence,
+              priority: todo.priority,
+              projectId: todo.projectId,
+              isCompleted: false,
+              parentId: todo.parentId,
+              level: todo.level,
+              reminder: nextOccurrence,
+              estimatedMinutes: todo.estimatedMinutes,
+              elapsedMinutes: 0,
+              elapsedSeconds: 0,
+              recurrenceType: todo.recurrenceType,
+              recurrenceDayOfWeek: todo.recurrenceDayOfWeek,
+              recurrenceDayOfMonth: todo.recurrenceDayOfMonth,
+              recurrenceTime: todo.recurrenceTime,
+            );
+            
+            _todos.add(newTodo);
+            debugPrint('✅ Nouvelle occurrence créée pour la tâche récurrente "${todo.title}" à ${nextOccurrence}');
+            
+            // Programmer la notification pour la nouvelle occurrence
+            NotificationService.scheduleTaskReminder(
+              taskId: newTodo.id,
+              title: newTodo.title,
+              body: 'Tâche récurrente: ${newTodo.recurrenceText}',
+              scheduledDate: nextOccurrence,
+            ).then((_) {
+              debugPrint('✅ Notification programmée pour la nouvelle occurrence');
+            }).catchError((e) {
+              debugPrint('❌ Erreur programmation notification nouvelle occurrence: $e');
+            });
+          }
+        }
       } catch (e) {
         debugPrint('❌ Tâche non trouvée pour toggle: $id');
         return;
@@ -1023,10 +1064,21 @@ class _TodoHomePageState extends State<TodoHomePage> {
             onTap: () => _editTodo(subTask),
             child: ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              leading: Checkbox(
-                value: subTask.isCompleted,
-                onChanged: (_) => _toggleTodo(subTask.id),
-              ),
+                                            leading: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Checkbox(
+                                    value: subTask.isCompleted,
+                                    onChanged: (_) => _toggleTodo(subTask.id),
+                                  ),
+                                  if (subTask.isRecurring)
+                                    Icon(
+                                      Icons.repeat,
+                                      size: 16,
+                                      color: Colors.purple,
+                                    ),
+                                ],
+                              ),
               title: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1058,8 +1110,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
                         ),
                     ],
                   ),
-                  // Dates sur la deuxième ligne
-                  if (subTask.dueDate != null || subTask.reminder != null)
+                  // Dates et récurrence sur la deuxième ligne
+                  if (subTask.dueDate != null || subTask.reminder != null || subTask.isRecurring)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Row(
@@ -1072,7 +1124,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
                               style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
                             ),
                           ],
-                          if (subTask.dueDate != null && subTask.reminder != null)
+                          if (subTask.dueDate != null && (subTask.reminder != null || subTask.isRecurring))
                             const SizedBox(width: 12),
                           if (subTask.reminder != null) ...[
                             Icon(Icons.alarm, size: 14),
@@ -1080,6 +1132,16 @@ class _TodoHomePageState extends State<TodoHomePage> {
                             Text(
                               '${subTask.reminder!.day}/${subTask.reminder!.month}/${subTask.reminder!.year} à ${subTask.reminder!.hour.toString().padLeft(2, '0')}:${subTask.reminder!.minute.toString().padLeft(2, '0')}',
                               style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                            ),
+                          ],
+                          if (subTask.reminder != null && subTask.isRecurring)
+                            const SizedBox(width: 12),
+                          if (subTask.isRecurring) ...[
+                            Icon(Icons.repeat, size: 14, color: Colors.purple),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${subTask.recurrenceText}${subTask.recurrenceTimeText.isNotEmpty ? ' à ${subTask.recurrenceTimeText}' : ''}',
+                              style: TextStyle(fontSize: 12, color: Colors.purple, fontWeight: FontWeight.w500),
                             ),
                           ],
                         ],
@@ -1918,9 +1980,20 @@ class _TodoHomePageState extends State<TodoHomePage> {
                             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                             child: ListTile(
                               contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                              leading: Checkbox(
-                                value: todo.isCompleted,
-                                onChanged: (_) => _toggleTodo(todo.id),
+                              leading: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Checkbox(
+                                    value: todo.isCompleted,
+                                    onChanged: (_) => _toggleTodo(todo.id),
+                                  ),
+                                  if (todo.isRecurring)
+                                    Icon(
+                                      Icons.repeat,
+                                      size: 16,
+                                      color: Colors.purple,
+                                    ),
+                                ],
                               ),
                               title: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1953,8 +2026,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
                                         ),
                                     ],
                                   ),
-                                  // Dates sur la deuxième ligne
-                                  if (todo.dueDate != null || todo.reminder != null)
+                                  // Dates et récurrence sur la deuxième ligne
+                                  if (todo.dueDate != null || todo.reminder != null || todo.isRecurring)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 4),
                                       child: Row(
@@ -1967,7 +2040,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
                                               style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
                                             ),
                                           ],
-                                          if (todo.dueDate != null && todo.reminder != null)
+                                          if (todo.dueDate != null && (todo.reminder != null || todo.isRecurring))
                                             const SizedBox(width: 12),
                                           if (todo.reminder != null) ...[
                                             Icon(Icons.alarm, size: 14),
@@ -1975,6 +2048,16 @@ class _TodoHomePageState extends State<TodoHomePage> {
                                             Text(
                                               '${todo.reminder!.day}/${todo.reminder!.month}/${todo.reminder!.year} à ${todo.reminder!.hour.toString().padLeft(2, '0')}:${todo.reminder!.minute.toString().padLeft(2, '0')}',
                                               style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
+                                            ),
+                                          ],
+                                          if (todo.reminder != null && todo.isRecurring)
+                                            const SizedBox(width: 12),
+                                          if (todo.isRecurring) ...[
+                                            Icon(Icons.repeat, size: 14, color: Colors.purple),
+                                            const SizedBox(width: 2),
+                                            Text(
+                                              '${todo.recurrenceText}${todo.recurrenceTimeText.isNotEmpty ? ' à ${todo.recurrenceTimeText}' : ''}',
+                                              style: TextStyle(fontSize: 12, color: Colors.purple, fontWeight: FontWeight.w500),
                                             ),
                                           ],
                                         ],
@@ -2728,6 +2811,12 @@ class _EditTodoModalState extends State<EditTodoModal> {
   final TextEditingController _subTaskController = TextEditingController();
   late List<TodoItem> _subTasks;
 
+  // Variables pour la récurrence
+  late RecurrenceType _selectedRecurrenceType;
+  late int? _selectedRecurrenceDayOfWeek;
+  late int? _selectedRecurrenceDayOfMonth;
+  late TimeOfDay? _selectedRecurrenceTime;
+
   @override
   void initState() {
     super.initState();
@@ -2744,6 +2833,25 @@ class _EditTodoModalState extends State<EditTodoModal> {
             orElse: () => widget.projects.first,
           );
     _subTasks = widget.subTasks;
+    
+    // Initialisation des variables de récurrence
+    _selectedRecurrenceType = widget.todo.recurrenceType;
+    _selectedRecurrenceDayOfWeek = widget.todo.recurrenceDayOfWeek;
+    _selectedRecurrenceDayOfMonth = widget.todo.recurrenceDayOfMonth;
+    _selectedRecurrenceTime = widget.todo.recurrenceTime;
+  }
+
+  String _getRecurrenceTypeText(RecurrenceType type) {
+    switch (type) {
+      case RecurrenceType.none:
+        return 'Non récurrente';
+      case RecurrenceType.daily:
+        return 'Quotidienne';
+      case RecurrenceType.weekly:
+        return 'Hebdomadaire';
+      case RecurrenceType.monthly:
+        return 'Mensuelle';
+    }
   }
 
   void _addSubTask() {
@@ -3041,6 +3149,136 @@ class _EditTodoModalState extends State<EditTodoModal> {
                   prefixIcon: Icon(Icons.timer),
                 ),
               ),
+              const SizedBox(height: 16),
+              
+              // Section Récurrence
+              const Text(
+                'Récurrence',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              
+              // Type de récurrence
+              DropdownButtonFormField<RecurrenceType>(
+                value: _selectedRecurrenceType,
+                decoration: const InputDecoration(
+                  labelText: 'Type de récurrence',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.repeat),
+                ),
+                items: RecurrenceType.values.map((type) {
+                  return DropdownMenuItem(
+                    value: type,
+                    child: Text(_getRecurrenceTypeText(type)),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _selectedRecurrenceType = value;
+                      // Réinitialiser les paramètres spécifiques si nécessaire
+                      if (value == RecurrenceType.none) {
+                        _selectedRecurrenceDayOfWeek = null;
+                        _selectedRecurrenceDayOfMonth = null;
+                        _selectedRecurrenceTime = null;
+                      }
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 8),
+              
+              // Paramètres spécifiques selon le type de récurrence
+              if (_selectedRecurrenceType != RecurrenceType.none) ...[
+                // Heure de récurrence
+                TextField(
+                  readOnly: true,
+                  controller: TextEditingController(
+                    text: _selectedRecurrenceTime != null
+                        ? '${_selectedRecurrenceTime!.hour.toString().padLeft(2, '0')}:${_selectedRecurrenceTime!.minute.toString().padLeft(2, '0')}'
+                        : '',
+                  ),
+                  onTap: () async {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: _selectedRecurrenceTime ?? TimeOfDay.now(),
+                    );
+                    if (time != null) {
+                      setState(() {
+                        _selectedRecurrenceTime = time;
+                      });
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Heure de récurrence *',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.access_time),
+                    suffixIcon: _selectedRecurrenceTime != null
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              setState(() {
+                                _selectedRecurrenceTime = null;
+                              });
+                            },
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                
+                // Paramètres spécifiques pour hebdomadaire
+                if (_selectedRecurrenceType == RecurrenceType.weekly) ...[
+                  DropdownButtonFormField<int>(
+                    value: _selectedRecurrenceDayOfWeek,
+                    decoration: const InputDecoration(
+                      labelText: 'Jour de la semaine *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.calendar_view_week),
+                    ),
+                    items: [
+                      DropdownMenuItem(value: 1, child: Text('Lundi')),
+                      DropdownMenuItem(value: 2, child: Text('Mardi')),
+                      DropdownMenuItem(value: 3, child: Text('Mercredi')),
+                      DropdownMenuItem(value: 4, child: Text('Jeudi')),
+                      DropdownMenuItem(value: 5, child: Text('Vendredi')),
+                      DropdownMenuItem(value: 6, child: Text('Samedi')),
+                      DropdownMenuItem(value: 7, child: Text('Dimanche')),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedRecurrenceDayOfWeek = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                
+                // Paramètres spécifiques pour mensuel
+                if (_selectedRecurrenceType == RecurrenceType.monthly) ...[
+                  DropdownButtonFormField<int>(
+                    value: _selectedRecurrenceDayOfMonth,
+                    decoration: const InputDecoration(
+                      labelText: 'Jour du mois *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.calendar_month),
+                    ),
+                    items: List.generate(31, (index) {
+                      return DropdownMenuItem(
+                        value: index + 1,
+                        child: Text('${index + 1}'),
+                      );
+                    }),
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedRecurrenceDayOfMonth = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ],
+              
               const SizedBox(height: 24),
                 // Section Sous-tâches
                 if (widget.todo.canHaveSubTasks) ...[
@@ -3091,7 +3329,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                                 final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
                                 debugPrint('🟢 [EditTodoModal] homeState trouvé: ${homeState != null}');
                                 if (homeState != null) {
-                                  final subTasks = homeState._getSubTasks(subTask.id);
+                                  final subTasks = homeState._getVisibleSubTasks(subTask.id);
                                   debugPrint('🟢 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
                                   showModalBottomSheet(
                                     context: context,
@@ -3133,7 +3371,18 @@ class _EditTodoModalState extends State<EditTodoModal> {
                               }
                             },
                             child: ListTile(
-                              leading: const Icon(Icons.subdirectory_arrow_right),
+                              leading: Checkbox(
+                                value: subTask.isCompleted,
+                                onChanged: (_) {
+                                  debugPrint('🟢 [EditTodoModal] Toggle checkbox sous-tâche: ${subTask.title} (ID: ${subTask.id})');
+                                  if (widget.onToggleSubTask != null) {
+                                    widget.onToggleSubTask!(subTask.id);
+                                  }
+                                  setState(() {
+                                    subTask.isCompleted = !subTask.isCompleted;
+                                  });
+                                },
+                              ),
                               title: Text(
                                 subTask.title,
                                 style: TextStyle(
@@ -3249,7 +3498,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                         debugPrint('❌ [EditTodoModal] Tâche non trouvée dans la liste');
                       }
                       
-                      final subTasks = widget.homeState._getSubTasks(id);
+                      final subTasks = widget.homeState._getVisibleSubTasks(id);
                       debugPrint('🔵 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
                       for (final sub in subTasks) {
                         debugPrint('🔵 [EditTodoModal] Marquer sous-tâche: ${sub.id}');
@@ -3330,6 +3579,33 @@ class _EditTodoModalState extends State<EditTodoModal> {
       return; // Ne pas sauvegarder si le titre est trop long
     }
     
+    // Validation des paramètres de récurrence
+    if (_selectedRecurrenceType != RecurrenceType.none) {
+      if (_selectedRecurrenceTime == null) {
+        debugPrint('❌ _saveChanges(): Heure de récurrence manquante, sauvegarde annulée');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Veuillez spécifier une heure de récurrence')),
+        );
+        return;
+      }
+      
+      if (_selectedRecurrenceType == RecurrenceType.weekly && _selectedRecurrenceDayOfWeek == null) {
+        debugPrint('❌ _saveChanges(): Jour de la semaine manquant, sauvegarde annulée');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Veuillez spécifier un jour de la semaine')),
+        );
+        return;
+      }
+      
+      if (_selectedRecurrenceType == RecurrenceType.monthly && _selectedRecurrenceDayOfMonth == null) {
+        debugPrint('❌ _saveChanges(): Jour du mois manquant, sauvegarde annulée');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Veuillez spécifier un jour du mois')),
+        );
+        return;
+      }
+    }
+    
     int? estimatedMinutes;
     if (_estimatedTimeController.text.trim().isNotEmpty) {
       try {
@@ -3358,6 +3634,10 @@ class _EditTodoModalState extends State<EditTodoModal> {
       estimatedMinutes: estimatedMinutes,
       elapsedMinutes: widget.todo.elapsedMinutes,
       elapsedSeconds: widget.todo.elapsedSeconds,
+      recurrenceType: _selectedRecurrenceType,
+      recurrenceDayOfWeek: _selectedRecurrenceDayOfWeek,
+      recurrenceDayOfMonth: _selectedRecurrenceDayOfMonth,
+      recurrenceTime: _selectedRecurrenceTime,
     );
     
     debugPrint('🔄 _saveChanges(): Mise à jour de la tâche "${updatedTodo.title}"');
@@ -3406,6 +3686,23 @@ class _EditTodoModalState extends State<EditTodoModal> {
           }).catchError((e) {
             debugPrint('❌ _saveChanges(): Erreur reprogrammation notification: $e');
           });
+        }
+        
+        // Programmer les rappels de récurrence si la tâche est récurrente
+        if (updatedTodo.isRecurring && updatedTodo.recurrenceTime != null) {
+          final nextOccurrence = updatedTodo.getNextOccurrence();
+          if (nextOccurrence != null && nextOccurrence.isAfter(DateTime.now())) {
+            NotificationService.scheduleTaskReminder(
+              taskId: updatedTodo.id,
+              title: updatedTodo.title,
+              body: 'Tâche récurrente: ${updatedTodo.recurrenceText}',
+              scheduledDate: nextOccurrence,
+            ).then((_) {
+              debugPrint('✅ _saveChanges(): Rappel de récurrence programmé pour "${updatedTodo.title}" à ${nextOccurrence}');
+            }).catchError((e) {
+              debugPrint('❌ _saveChanges(): Erreur programmation rappel de récurrence: $e');
+            });
+          }
         }
         
         // Reprogrammer les notifications pour les sous-tâches

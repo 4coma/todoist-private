@@ -1,6 +1,8 @@
- 
+import 'package:flutter/material.dart';
 
 enum Priority { low, medium, high }
+
+enum RecurrenceType { none, daily, weekly, monthly }
 
 class TodoItem {
   final int id;
@@ -18,6 +20,12 @@ class TodoItem {
   int elapsedSeconds; // Temps passé en secondes
   final DateTime createdAt;
   final DateTime updatedAt;
+  
+  // Propriétés de récurrence
+  final RecurrenceType recurrenceType;
+  final int? recurrenceDayOfWeek; // 1-7 pour les tâches hebdomadaires (1 = lundi)
+  final int? recurrenceDayOfMonth; // 1-31 pour les tâches mensuelles
+  final TimeOfDay? recurrenceTime; // Heure de récurrence
 
   TodoItem({
     required this.id,
@@ -35,6 +43,10 @@ class TodoItem {
     this.elapsedSeconds = 0,
     DateTime? createdAt,
     DateTime? updatedAt,
+    this.recurrenceType = RecurrenceType.none,
+    this.recurrenceDayOfWeek,
+    this.recurrenceDayOfMonth,
+    this.recurrenceTime,
   }) : 
     createdAt = createdAt ?? DateTime.now(),
     updatedAt = updatedAt ?? DateTime.now();
@@ -120,11 +132,24 @@ class TodoItem {
       'elapsedSeconds': elapsedSeconds,
       'createdAt': createdAt.millisecondsSinceEpoch,
       'updatedAt': updatedAt.millisecondsSinceEpoch,
+      'recurrenceType': recurrenceType.index,
+      'recurrenceDayOfWeek': recurrenceDayOfWeek,
+      'recurrenceDayOfMonth': recurrenceDayOfMonth,
+      'recurrenceTime': recurrenceTime != null ? '${recurrenceTime!.hour}:${recurrenceTime!.minute}' : null,
     };
   }
 
   // Créer depuis une Map (compatibilité avec l'ancien format)
   factory TodoItem.fromMap(Map<String, dynamic> map) {
+    TimeOfDay? parseTimeOfDay(String? timeString) {
+      if (timeString == null) return null;
+      final parts = timeString.split(':');
+      if (parts.length == 2) {
+        return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+      }
+      return null;
+    }
+
     return TodoItem(
       id: map['id'],
       title: map['title'],
@@ -141,6 +166,10 @@ class TodoItem {
       elapsedSeconds: (map['elapsedSeconds'] ?? ((map['elapsedMinutes'] ?? 0) * 60)) as int,
       createdAt: map['createdAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['createdAt']) : DateTime.now(),
       updatedAt: map['updatedAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['updatedAt']) : DateTime.now(),
+      recurrenceType: map['recurrenceType'] != null ? RecurrenceType.values[map['recurrenceType']] : RecurrenceType.none,
+      recurrenceDayOfWeek: map['recurrenceDayOfWeek'],
+      recurrenceDayOfMonth: map['recurrenceDayOfMonth'],
+      recurrenceTime: parseTimeOfDay(map['recurrenceTime']),
     );
   }
 
@@ -162,11 +191,24 @@ class TodoItem {
       'elapsedSeconds': elapsedSeconds,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
+      'recurrenceType': recurrenceType.name,
+      'recurrenceDayOfWeek': recurrenceDayOfWeek,
+      'recurrenceDayOfMonth': recurrenceDayOfMonth,
+      'recurrenceTime': recurrenceTime != null ? '${recurrenceTime!.hour.toString().padLeft(2, '0')}:${recurrenceTime!.minute.toString().padLeft(2, '0')}' : null,
     };
   }
 
   // Nouvelle méthode fromJson() pour l'export/import
   factory TodoItem.fromJson(Map<String, dynamic> json) {
+    TimeOfDay? parseTimeOfDay(String? timeString) {
+      if (timeString == null) return null;
+      final parts = timeString.split(':');
+      if (parts.length == 2) {
+        return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+      }
+      return null;
+    }
+
     return TodoItem(
       id: json['id'] as int,
       title: json['title'] as String,
@@ -186,6 +228,15 @@ class TodoItem {
       elapsedSeconds: json['elapsedSeconds'] as int? ?? 0,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
+      recurrenceType: json['recurrenceType'] != null 
+          ? RecurrenceType.values.firstWhere(
+              (e) => e.name == json['recurrenceType'],
+              orElse: () => RecurrenceType.none,
+            )
+          : RecurrenceType.none,
+      recurrenceDayOfWeek: json['recurrenceDayOfWeek'] as int?,
+      recurrenceDayOfMonth: json['recurrenceDayOfMonth'] as int?,
+      recurrenceTime: parseTimeOfDay(json['recurrenceTime'] as String?),
     );
   }
 
@@ -206,6 +257,10 @@ class TodoItem {
     int? elapsedSeconds,
     DateTime? createdAt,
     DateTime? updatedAt,
+    RecurrenceType? recurrenceType,
+    int? recurrenceDayOfWeek,
+    int? recurrenceDayOfMonth,
+    TimeOfDay? recurrenceTime,
   }) {
     return TodoItem(
       id: id ?? this.id,
@@ -223,6 +278,10 @@ class TodoItem {
       elapsedSeconds: elapsedSeconds ?? this.elapsedSeconds,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
+      recurrenceType: recurrenceType ?? this.recurrenceType,
+      recurrenceDayOfWeek: recurrenceDayOfWeek ?? this.recurrenceDayOfWeek,
+      recurrenceDayOfMonth: recurrenceDayOfMonth ?? this.recurrenceDayOfMonth,
+      recurrenceTime: recurrenceTime ?? this.recurrenceTime,
     );
   }
 
@@ -234,6 +293,84 @@ class TodoItem {
 
   @override
   int get hashCode => id.hashCode;
+
+  // Méthodes pour la récurrence
+  bool get isRecurring => recurrenceType != RecurrenceType.none;
+
+  String get recurrenceText {
+    switch (recurrenceType) {
+      case RecurrenceType.none:
+        return 'Non récurrente';
+      case RecurrenceType.daily:
+        return 'Quotidienne';
+      case RecurrenceType.weekly:
+        if (recurrenceDayOfWeek != null) {
+          final days = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+          return 'Hebdomadaire (${days[recurrenceDayOfWeek! - 1]})';
+        }
+        return 'Hebdomadaire';
+      case RecurrenceType.monthly:
+        if (recurrenceDayOfMonth != null) {
+          return 'Mensuelle (jour $recurrenceDayOfMonth)';
+        }
+        return 'Mensuelle';
+    }
+  }
+
+  String get recurrenceTimeText {
+    if (recurrenceTime == null) return '';
+    return '${recurrenceTime!.hour.toString().padLeft(2, '0')}:${recurrenceTime!.minute.toString().padLeft(2, '0')}';
+  }
+
+  // Méthode pour calculer la prochaine occurrence
+  DateTime? getNextOccurrence() {
+    if (!isRecurring || recurrenceTime == null) return null;
+    
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final targetTime = DateTime(
+      today.year, 
+      today.month, 
+      today.day, 
+      recurrenceTime!.hour, 
+      recurrenceTime!.minute
+    );
+
+    switch (recurrenceType) {
+      case RecurrenceType.none:
+        return null;
+      case RecurrenceType.daily:
+        return targetTime.isBefore(now) ? targetTime.add(const Duration(days: 1)) : targetTime;
+      case RecurrenceType.weekly:
+        if (recurrenceDayOfWeek == null) return null;
+        final currentWeekday = now.weekday;
+        final daysUntilNext = (recurrenceDayOfWeek! - currentWeekday + 7) % 7;
+        final nextDate = today.add(Duration(days: daysUntilNext));
+        return DateTime(
+          nextDate.year, 
+          nextDate.month, 
+          nextDate.day, 
+          recurrenceTime!.hour, 
+          recurrenceTime!.minute
+        );
+      case RecurrenceType.monthly:
+        if (recurrenceDayOfMonth == null) return null;
+        final currentDay = now.day;
+        DateTime nextDate;
+        if (currentDay <= recurrenceDayOfMonth!) {
+          nextDate = DateTime(now.year, now.month, recurrenceDayOfMonth!);
+        } else {
+          nextDate = DateTime(now.year, now.month + 1, recurrenceDayOfMonth!);
+        }
+        return DateTime(
+          nextDate.year, 
+          nextDate.month, 
+          nextDate.day, 
+          recurrenceTime!.hour, 
+          recurrenceTime!.minute
+        );
+    }
+  }
 
   @override
   String toString() {
