@@ -68,9 +68,13 @@ dependencies:
   
   # Gestion des permissions et accès aux fichiers
   permission_handler: ^11.3.1
-  
+
   # Gestion des chemins de fichiers
   path_provider: ^2.1.2
+
+  # Enregistrement audio et requêtes HTTP
+  record: ^5.0.4
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

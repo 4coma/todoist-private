@@ -11,6 +11,10 @@ import 'models/project.dart';
 import 'models/todo_item.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'services/test_data_generator_service.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:record/record.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -216,6 +220,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
   bool _showDescriptions = false;
   bool _showCompletedTasks = false; // Mode "Tâches achevées" (sidebar)
   bool _showCompletedTasksInProjects = false; // Option "Afficher les tâches terminées" (paramètres)
+
+  String _openAiApiKeys = '';
   
   // Variables pour le nouveau système de thèmes
   String _selectedColor = 'blue';
@@ -313,8 +319,9 @@ class _TodoHomePageState extends State<TodoHomePage> {
       setState(() {
         _showDescriptions = prefs.getBool('show_descriptions') ?? false;
         _showCompletedTasksInProjects = prefs.getBool('show_completed_tasks') ?? false;
+        _openAiApiKeys = prefs.getString('openai_api_keys') ?? '';
       });
-      debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions, show_completed_tasks_in_projects = $_showCompletedTasksInProjects');
+      debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions, show_completed_tasks_in_projects = $_showCompletedTasksInProjects, openai_keys_présents = ${_openAiApiKeys.isNotEmpty}');
     } catch (e) {
       debugPrint('❌ Erreur lors du chargement des paramètres: $e');
     }
@@ -494,6 +501,130 @@ class _TodoHomePageState extends State<TodoHomePage> {
         }
       }
     });
+  }
+
+  Future<String?> _recordAudio() async {
+    final recorder = Record();
+    if (!await recorder.hasPermission()) {
+      final status = await Permission.microphone.request();
+      if (!status.isGranted) return null;
+    }
+    await recorder.start(encoder: AudioEncoder.aacLc);
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => GestureDetector(
+        onTap: () => Navigator.of(ctx).pop(),
+        child: const AlertDialog(
+          content: Text('Enregistrement en cours...\nTapez pour terminer'),
+        ),
+      ),
+    );
+    final path = await recorder.stop();
+    return path;
+  }
+
+  Future<String?> _transcribeAudio(String path, String apiKey) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('https://api.openai.com/v1/audio/transcriptions'),
+    )
+      ..headers['Authorization'] = 'Bearer $apiKey'
+      ..fields['model'] = 'whisper-1'
+      ..files.add(await http.MultipartFile.fromPath('file', path));
+
+    final response = await request.send();
+    if (response.statusCode == 200) {
+      final respStr = await response.stream.bytesToString();
+      final data = jsonDecode(respStr);
+      return data['text'];
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _extractTodoFromText(
+      String text, String apiKey) async {
+    final prompt = '''
+Tu es un assistant qui transforme un texte en une tâche structurée.
+Réponds uniquement avec un objet JSON {"title": "...", "description": "..."}.
+Si l'utilisateur indique explicitement "titre" et "description", garde ces valeurs telles quelles.
+Sinon, reformule au besoin pour proposer un titre concis et une description détaillée.
+Texte: $text
+''';
+
+    final response = await http.post(
+      Uri.parse('https://api.openai.com/v1/chat/completions'),
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-4o-mini',
+        'messages': [
+          {'role': 'user', 'content': prompt},
+        ],
+        'response_format': {'type': 'json_object'},
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final content = data['choices'][0]['message']['content'];
+      return jsonDecode(content);
+    }
+    return null;
+  }
+
+  Future<void> _addTodoByVoice() async {
+    if (_openAiApiKeys.trim().isEmpty) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clé API manquante'),
+          content: const Text('Veuillez renseigner votre clé API OpenAI dans les paramètres.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final path = await _recordAudio();
+    if (path == null) return;
+
+    final apiKey = _openAiApiKeys.split(',').first.trim();
+    final transcription = await _transcribeAudio(path, apiKey);
+    if (transcription == null) return;
+
+    final todoMap = await _extractTodoFromText(transcription, apiKey);
+    if (todoMap == null) return;
+
+    final newTodo = TodoItem(
+      id: DateTime.now().millisecondsSinceEpoch,
+      title: todoMap['title'] ?? 'Sans titre',
+      description: todoMap['description'] ?? '',
+      priority: Priority.medium,
+      projectId: _selectedProject?.id,
+      isCompleted: false,
+    );
+
+    setState(() {
+      _todos.add(newTodo);
+    });
+    await _saveData();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Tâche "${newTodo.title}" ajoutée'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   void _openEditModal(TodoItem todo) {
@@ -2360,9 +2491,21 @@ class _TodoHomePageState extends State<TodoHomePage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addTodo,
-        child: const Icon(Icons.add),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton(
+            heroTag: 'voice_add',
+            onPressed: _addTodoByVoice,
+            child: const Icon(Icons.mic),
+          ),
+          const SizedBox(height: 8),
+          FloatingActionButton(
+            heroTag: 'text_add',
+            onPressed: _addTodo,
+            child: const Icon(Icons.add),
+          ),
+        ],
       ),
     );
   }
@@ -4153,6 +4296,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _showCompletedTasksInProjects = false;
   String _selectedColor = 'blue';
   bool _isDarkMode = false;
+  String _openAiApiKeys = '';
+  final TextEditingController _apiKeyController = TextEditingController();
 
   @override
   void initState() {
@@ -4166,6 +4311,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _showDescriptions = prefs.getBool('show_descriptions') ?? false;
       _showCompletedTasksInProjects = prefs.getBool('show_completed_tasks') ?? false;
+      _openAiApiKeys = prefs.getString('openai_api_keys') ?? '';
+      _apiKeyController.text = _openAiApiKeys;
     });
     debugPrint('📋 [SettingsScreen] Préférences chargées: show_descriptions = $_showDescriptions, show_completed_tasks = $_showCompletedTasksInProjects');
   }
@@ -4202,6 +4349,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     
     // Forcer la mise à jour de l'interface
     widget.onSettingsChanged();
+  }
+
+  Future<void> _saveOpenAiApiKeys(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('openai_api_keys', value);
+    setState(() {
+      _openAiApiKeys = value;
+    });
+    widget.onSettingsChanged();
+  }
+
+  @override
+  void dispose() {
+    _apiKeyController.dispose();
+    super.dispose();
   }
 
 
@@ -4441,6 +4603,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                             ),
                           ],
+                        ),
+                        TextField(
+                          controller: _apiKeyController,
+                          decoration: const InputDecoration(
+                            labelText: 'Clés API OpenAI',
+                            hintText: 'clé1, clé2, ...',
+                          ),
+                          onChanged: _saveOpenAiApiKeys,
                         ),
                         const SizedBox(height: 16),
                         SwitchListTile(
