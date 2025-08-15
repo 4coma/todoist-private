@@ -15,7 +15,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:path_provider/path_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -505,18 +504,16 @@ class _TodoHomePageState extends State<TodoHomePage> {
   }
 
   Future<String?> _recordAudio() async {
-    final recorder = AudioRecorder();
+    final recorder = Record();
     if (!await recorder.hasPermission()) {
       final status = await Permission.microphone.request();
       if (!status.isGranted) return null;
     }
-    final tempDir = await getTemporaryDirectory();
-    final filePath = '${tempDir.path}/todo_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: filePath);
+    await recorder.start(encoder: AudioEncoder.aacLc);
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => GestureDetector(
+              builder: (ctx) => GestureDetector(
         onTap: () => Navigator.of(ctx).pop(),
         child: const AlertDialog(
           content: Text('Enregistrement en cours...\nTapez pour terminer'),
@@ -524,7 +521,6 @@ class _TodoHomePageState extends State<TodoHomePage> {
       ),
     );
     final path = await recorder.stop();
-    await recorder.dispose();
     return path;
   }
 
@@ -4659,6 +4655,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                             ),
                           ],
+                        ),
+                        TextField(
+                          controller: _apiKeyController,
+                          decoration: const InputDecoration(
+                            labelText: 'Clés API OpenAI',
+                            hintText: 'clé1, clé2, ...',
+                          ),
+                          onChanged: _saveOpenAiApiKeys,
                         ),
                         const SizedBox(height: 16),
                         SwitchListTile(

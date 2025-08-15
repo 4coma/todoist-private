@@ -73,7 +73,9 @@ dependencies:
   path_provider: ^2.1.2
 
   # Enregistrement audio et requêtes HTTP
-  record: ^5.0.4
+  # Utilisation d'une version du plugin de capture audio compatible avec Linux
+  # pour éviter l'erreur `RecordLinux` manquant `startStream`.
+  record: ^4.4.3
   http: ^1.2.0
 
 dev_dependencies:
