@@ -68,9 +68,15 @@ dependencies:
   
   # Gestion des permissions et accès aux fichiers
   permission_handler: ^11.3.1
-  
+
   # Gestion des chemins de fichiers
   path_provider: ^2.1.2
+
+  # Enregistrement audio et requêtes HTTP
+  # Utilisation d'une version du plugin de capture audio compatible avec Linux
+  # pour éviter l'erreur `RecordLinux` manquant `startStream`.
+  record: ^4.4.3
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

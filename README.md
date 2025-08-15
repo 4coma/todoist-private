@@ -15,6 +15,7 @@ Une application de gestion de tâches intuitive, offrant une expérience utilisa
 - ✅ Marquage rapide comme terminée
 - ✅ Suppression avec confirmation
 - ✅ Édition complète des propriétés
+- ✅ Ajout de tâches par commande vocale (Whisper + GPT)
 
 ### Système de projets
 - ✅ Création de projets avec couleurs personnalisées

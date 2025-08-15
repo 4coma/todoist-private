@@ -5,6 +5,12 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/),
 et ce projet adhère au [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-01-01
+
+### Ajouté
+- ✅ Création de tâches par commande vocale via OpenAI
+- ✅ Champ de configuration pour les clés API OpenAI
+
 ## [1.0.0] - 2024-12-19
 
 ### Ajouté
