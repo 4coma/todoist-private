@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -504,12 +505,14 @@ class _TodoHomePageState extends State<TodoHomePage> {
   }
 
   Future<String?> _recordAudio() async {
-    final recorder = Record();
+    final recorder = AudioRecorder();
     if (!await recorder.hasPermission()) {
       final status = await Permission.microphone.request();
       if (!status.isGranted) return null;
     }
-    await recorder.start(encoder: AudioEncoder.aacLc);
+    final tempDir = await getTemporaryDirectory();
+    final filePath = '${tempDir.path}/todo_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    await recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: filePath);
     await showDialog(
       context: context,
       barrierDismissible: false,
@@ -521,6 +524,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
       ),
     );
     final path = await recorder.stop();
+    await recorder.dispose();
     return path;
   }
 
@@ -4576,6 +4580,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
+                  // Section Reconnaissance vocale
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.mic, color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Reconnaissance vocale',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Configurez l\'ajout de tâches par la voix via OpenAI Whisper et GPT',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _apiKeyController,
+                          decoration: const InputDecoration(
+                            labelText: 'Clés API OpenAI',
+                            hintText: 'clé1, clé2, ...',
+                            helperText: 'Entrez une ou plusieurs clés API OpenAI séparées par des virgules',
+                          ),
+                          onChanged: _saveOpenAiApiKeys,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
                   // Section Affichage
                   Container(
                     width: double.infinity,
@@ -4603,14 +4659,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                             ),
                           ],
-                        ),
-                        TextField(
-                          controller: _apiKeyController,
-                          decoration: const InputDecoration(
-                            labelText: 'Clés API OpenAI',
-                            hintText: 'clé1, clé2, ...',
-                          ),
-                          onChanged: _saveOpenAiApiKeys,
                         ),
                         const SizedBox(height: 16),
                         SwitchListTile(
