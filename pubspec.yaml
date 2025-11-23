@@ -36,7 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.2
   
   # Plugin de notifications (remplace flutter_local_notifications)
-  awesome_notifications: ^0.8.2
+  awesome_notifications: ^0.10.1
   
   # Gestion des fuseaux horaires pour les notifications programmées
   timezone: ^0.9.2
@@ -64,7 +64,7 @@ dependencies:
   # === DÉPENDANCES POUR GESTION DES FICHIERS ===
   
   # Sélection et sauvegarde de fichiers
-  file_picker: ^6.1.1
+  file_picker: ^8.0.0
   
   # Gestion des permissions et accès aux fichiers
   permission_handler: ^11.3.1
@@ -73,9 +73,7 @@ dependencies:
   path_provider: ^2.1.2
 
   # Enregistrement audio et requêtes HTTP
-  # Utilisation d'une version du plugin de capture audio compatible avec Linux
-  # pour éviter l'erreur `RecordLinux` manquant `startStream`.
-  record: ^4.4.3
+  record: ^6.0.0
   http: ^1.2.0
 
 dev_dependencies:

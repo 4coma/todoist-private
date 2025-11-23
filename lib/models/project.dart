@@ -4,6 +4,7 @@ class Project {
   final int id;
   final String name;
   final Color color;
+  final IconData icon;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -11,6 +12,7 @@ class Project {
     required this.id,
     required this.name,
     required this.color,
+    this.icon = Icons.folder,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) : 
@@ -23,6 +25,7 @@ class Project {
       'id': id,
       'name': name,
       'color': color.value,
+      'icon': icon.codePoint,
       'createdAt': createdAt.millisecondsSinceEpoch,
       'updatedAt': updatedAt.millisecondsSinceEpoch,
     };
@@ -34,6 +37,7 @@ class Project {
       id: map['id'],
       name: map['name'],
       color: Color(map['color']),
+      icon: map['icon'] != null ? IconData(map['icon'], fontFamily: 'MaterialIcons') : Icons.folder,
       createdAt: map['createdAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['createdAt']) : DateTime.now(),
       updatedAt: map['updatedAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['updatedAt']) : DateTime.now(),
     );
@@ -45,6 +49,7 @@ class Project {
       'id': id,
       'name': name,
       'color': color.value,
+      'icon': icon.codePoint,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -56,6 +61,7 @@ class Project {
       id: json['id'] as int,
       name: json['name'] as String,
       color: Color(json['color'] as int),
+      icon: json['icon'] != null ? IconData(json['icon'] as int, fontFamily: 'MaterialIcons') : Icons.folder,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );
@@ -66,6 +72,7 @@ class Project {
     int? id,
     String? name,
     Color? color,
+    IconData? icon,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -73,6 +80,7 @@ class Project {
       id: id ?? this.id,
       name: name ?? this.name,
       color: color ?? this.color,
+      icon: icon ?? this.icon,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
     );

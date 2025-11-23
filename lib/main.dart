@@ -15,6 +15,11 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'screens/design_system_demo.dart';
+import 'design_system/tokens.dart';
+import 'design_system/widgets.dart';
+import 'design_system/forms.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -178,9 +183,15 @@ class _TodoAppState extends State<TodoApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Créer les thèmes clair et sombre basés sur la couleur sélectionnée
+    final lightTheme = AppThemes.getTheme(_selectedColor, false);
+    final darkTheme = AppThemes.getTheme(_selectedColor, true);
+    
     return MaterialApp(
       title: 'Todo App',
-      theme: _currentTheme,
+      theme: lightTheme,
+      darkTheme: darkTheme,
+      themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
       debugShowCheckedModeBanner: false, // Enlève le banner DEBUG
       home: TodoHomePage(
         onThemeChanged: _changeTheme,
@@ -212,6 +223,7 @@ class TodoHomePage extends StatefulWidget {
 }
 
 class _TodoHomePageState extends State<TodoHomePage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   List<Project> _projects = [];
   List<TodoItem> _todos = [];
   Project? _selectedProject;
@@ -434,9 +446,18 @@ class _TodoHomePageState extends State<TodoHomePage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => AddTodoModal(
+      backgroundColor: Colors.transparent, // Transparent pour laisser le fond blanc du container
+      builder: (context) => Theme(
+        data: Theme.of(context).copyWith(
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white, // Force white fill color
+          ),
+        ),
+        child: AddTodoModal(
         projects: _projects,
         selectedProject: _selectedProject, // Passer le projet sélectionné
+        ),
       ),
     ).then((result) async {
       if (result != null && result['todo'] != null) {
@@ -504,16 +525,18 @@ class _TodoHomePageState extends State<TodoHomePage> {
   }
 
   Future<String?> _recordAudio() async {
-    final recorder = Record();
+    final recorder = AudioRecorder();
     if (!await recorder.hasPermission()) {
       final status = await Permission.microphone.request();
       if (!status.isGranted) return null;
     }
-    await recorder.start(encoder: AudioEncoder.aacLc);
+    final tempDir = await getTemporaryDirectory();
+    final filePath = '${tempDir.path}/todo_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    await recorder.start(RecordConfig(encoder: AudioEncoder.aacLc), path: filePath);
     await showDialog(
       context: context,
       barrierDismissible: false,
-              builder: (ctx) => GestureDetector(
+      builder: (ctx) => GestureDetector(
         onTap: () => Navigator.of(ctx).pop(),
         child: const AlertDialog(
           content: Text('Enregistrement en cours...\nTapez pour terminer'),
@@ -521,6 +544,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
       ),
     );
     final path = await recorder.stop();
+    await recorder.dispose();
     return path;
   }
 
@@ -635,7 +659,15 @@ Texte: $text
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => EditTodoModal(
+      backgroundColor: Colors.transparent, // Transparent pour laisser le fond blanc du container
+      builder: (context) => Theme(
+        data: Theme.of(context).copyWith(
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white, // Force white fill color
+          ),
+        ),
+        child: EditTodoModal(
         todo: todo,
         projects: _projects,
         subTasks: subTasks,
@@ -666,6 +698,7 @@ Texte: $text
           _openEditModal(subTask);
         },
         homeState: this,
+        ),
       ),
     ).then((result) async {
       debugPrint('🟢 [_openEditModal] Modal fermé, résultat: ${result != null ? 'avec données' : 'sans données'}');
@@ -1096,19 +1129,26 @@ Texte: $text
   // Sous-tâches à afficher selon les préférences
   List<TodoItem> _getVisibleSubTasks(int parentId) {
     final subTasks = _getSubTasks(parentId);
+    List<TodoItem> result;
 
     if (_showCompletedTasks) {
       // En mode "Tâches achevées", n'afficher que les sous-tâches terminées
-      return subTasks.where((t) => t.isCompleted).toList();
-    }
-
-    if (_showCompletedTasksInProjects) {
+      result = subTasks.where((t) => t.isCompleted).toList();
+    } else if (_showCompletedTasksInProjects) {
       // Option activée : afficher toutes les sous-tâches
-      return subTasks;
+      result = subTasks;
+    } else {
+      // Option désactivée : masquer les sous-tâches terminées
+      result = subTasks.where((t) => !t.isCompleted).toList();
     }
 
-    // Option désactivée : masquer les sous-tâches terminées
-    return subTasks.where((t) => !t.isCompleted).toList();
+    // Toujours placer les sous-tâches terminées en bas
+    result.sort((a, b) {
+      if (a.isCompleted == b.isCompleted) return 0;
+      return a.isCompleted ? 1 : -1; // Terminées en bas
+    });
+
+    return result;
   }
 
   List<TodoItem> _getAllSubTasks(int parentId) {
@@ -1676,14 +1716,22 @@ Texte: $text
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => SettingsScreen(
-        onThemeChanged: widget.onThemeChanged,
-        onThemeChangedLegacy: widget.onThemeChangedLegacy,
-        onSettingsChanged: () {
-          _loadSettings();
-          _loadData();
-        },
-        onDataReload: _loadData,
+      builder: (context) => Theme(
+        data: Theme.of(context).copyWith(
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white,
+          ),
+        ),
+        child: SettingsScreen(
+          onThemeChanged: widget.onThemeChanged,
+          onThemeChangedLegacy: widget.onThemeChangedLegacy,
+          onSettingsChanged: () {
+            _loadSettings();
+            _loadData();
+          },
+          onDataReload: _loadData,
+        ),
       ),
     );
   }
@@ -1925,6 +1973,12 @@ Texte: $text
         break;
     }
     
+    // Toujours placer les tâches terminées en bas
+    filtered.sort((a, b) {
+      if (a.isCompleted == b.isCompleted) return 0;
+      return a.isCompleted ? 1 : -1; // Terminées en bas
+    });
+    
     return filtered;
   }
 
@@ -1951,176 +2005,362 @@ Texte: $text
     }
   }
 
+  // Helper pour construire les items du drawer avec Design System
+  Widget _buildDrawerItem({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool isSelected = false,
+    Color? iconColor,
+    int? count,
+    VoidCallback? onEdit,
+    VoidCallback? onDelete,
+  }) {
+    return Builder(
+      builder: (context) {
+        final brightness = Theme.of(context).brightness;
+        final mutedColor = DSColor.getMuted(brightness);
+        final bodyColor = DSColor.getBody(brightness);
+        final surfaceTintColor = DSColor.getSurfaceTint(brightness);
+        
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          decoration: BoxDecoration(
+            color: isSelected ? DSColor.primary.withOpacity(0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            leading: Icon(
+              icon,
+              color: iconColor ?? (isSelected ? DSColor.primary : mutedColor),
+              size: 22,
+            ),
+            title: Text(
+              label,
+              style: isSelected
+                  ? DSTypo.body.copyWith(color: DSColor.primary, fontWeight: FontWeight.w700)
+                  : DSTypo.body.copyWith(color: bodyColor),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (count != null && count > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isSelected ? DSColor.primary : surfaceTintColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '$count',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: isSelected ? Colors.white : DSColor.primary,
+                      ),
+                    ),
+                  ),
+                if (onEdit != null || onDelete != null)
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert, size: 18, color: mutedColor),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onSelected: (value) {
+                      if (value == 'edit' && onEdit != null) onEdit();
+                      if (value == 'delete' && onDelete != null) onDelete();
+                    },
+                    itemBuilder: (context) => [
+                      if (onEdit != null)
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.edit, size: 18, color: Colors.blue),
+                              const SizedBox(width: 8),
+                              Text('Modifier', style: DSTypo.bodyOf(context)),
+                            ],
+                          ),
+                        ),
+                      if (onDelete != null)
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.delete, size: 18, color: Colors.red),
+                              const SizedBox(width: 8),
+                              Text('Supprimer', style: DSTypo.bodyOf(context)),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+            onTap: onTap,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_getAppBarTitle()),
-        automaticallyImplyLeading: true,
-      ),
-      drawer: Drawer(
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        child: ListView(
-          padding: EdgeInsets.zero,
+      key: _scaffoldKey,
+      backgroundColor: Colors.transparent,
+      drawer: Builder(
+        builder: (context) {
+          final brightness = Theme.of(context).brightness;
+          final surfaceColor = DSColor.getSurface(brightness);
+          
+          return Drawer(
+            backgroundColor: surfaceColor,
+            child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DrawerHeader(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.folder,
-                    color: Colors.white,
-                    size: 32,
-                  ),
-                  const SizedBox(width: 16),
-                  Text(
-                    'Projets',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            ListTile(
-              leading: Icon(Icons.list),
-              title: Text('Toutes les tâches'),
-              selected: _selectedProject == null && !_showCompletedTasks,
-              onTap: () {
-                setState(() {
-                  _selectedProject = null;
-                  _showCompletedTasks = false;
-                });
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.check_circle),
-              title: Text('Tâches achevées'),
-              selected: _showCompletedTasks,
-              onTap: () {
-                setState(() {
-                  _showCompletedTasks = true;
-                });
-                Navigator.pop(context);
-              },
-            ),
-            Divider(),
-            ..._projects.map((project) {
-              final taskCount = _todos.where((todo) => todo.projectId == project.id && !todo.isCompleted).length;
-              debugPrint('🔄 [Sidebar] Projet "${project.name}": $taskCount tâches');
-              
-              return ListTile(
-                leading: Container(
-                  width: 16,
-                  height: 16,
+            // Header avec dégradé harmonisé avec le fond principal
+            Builder(
+              builder: (context) {
+                final brightness = Theme.of(context).brightness;
+                final gradient = DSColor.getBackdropGradient(brightness);
+                final surfaceColor = DSColor.getSurface(brightness);
+                final headingColor = DSColor.getHeading(brightness);
+                final bodyColor = DSColor.getBody(brightness);
+                
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
                   decoration: BoxDecoration(
-                    color: project.color,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                title: Text(project.name),
-                subtitle: Text('$taskCount tâches'),
-                selected: _selectedProject?.id == project.id,
-                onTap: () {
-                  setState(() {
-                    _selectedProject = project;
-                  });
-                  Navigator.pop(context);
-                },
-              trailing: PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                onSelected: (value) {
-                  if (value == 'edit') {
-                    Navigator.pop(context); // Fermer le drawer
-                    _editProject(project);
-                  } else if (value == 'delete') {
-                    Navigator.pop(context); // Fermer le drawer
-                    _deleteProject(project);
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem<String>(
-                    value: 'edit',
-                    child: Row(
-                      children: [
-                        Icon(Icons.edit, color: Colors.blue),
-                        SizedBox(width: 8),
-                        Text('Modifier', style: TextStyle(color: Colors.blue)),
-                      ],
+                    gradient: LinearGradient(
+                      colors: gradient,
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
                   ),
-                  const PopupMenuItem<String>(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete, color: Colors.red),
-                        SizedBox(width: 8),
-                        Text('Supprimer', style: TextStyle(color: Colors.red)),
-                      ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: surfaceColor.withOpacity(0.6),
+                          shape: BoxShape.circle,
+                          boxShadow: brightness == Brightness.dark
+                              ? []
+                              : [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                        ),
+                        child: Icon(Icons.person, size: 32, color: headingColor),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Mes Tâches',
+                        style: TextStyle(
+                          color: headingColor,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${_todos.where((t) => !t.isCompleted).length} tâches en cours',
+                        style: TextStyle(
+                          color: bodyColor,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            
+            // Liste des options
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                children: [
+                  _buildDrawerItem(
+                    icon: Icons.list,
+                    label: 'Toutes les tâches',
+                    isSelected: _selectedProject == null && !_showCompletedTasks,
+                    onTap: () {
+                      setState(() {
+                        _selectedProject = null;
+                        _showCompletedTasks = false;
+                      });
+                      Navigator.pop(context);
+                    },
+                  ),
+                  _buildDrawerItem(
+                    icon: Icons.check_circle_outline,
+                    label: 'Tâches achevées',
+                    isSelected: _showCompletedTasks,
+                    onTap: () {
+                      setState(() {
+                        _showCompletedTasks = true;
+                      });
+                      Navigator.pop(context);
+                    },
+                  ),
+                  
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+                    child: Builder(
+                      builder: (context) => Text('PROJETS', style: DSTypo.captionOf(context)),
+                    ),
+                  ),
+                  
+                  ..._projects.map((project) {
+                    final count = _todos.where((t) => t.projectId == project.id && !t.isCompleted).length;
+                    return _buildDrawerItem(
+                      icon: project.icon,
+                      iconColor: project.color,
+                      label: project.name,
+                      count: count,
+                      isSelected: _selectedProject?.id == project.id,
+                      onTap: () {
+                        setState(() => _selectedProject = project);
+                        Navigator.pop(context);
+                      },
+                      onEdit: () => _editProject(project),
+                      onDelete: () => _deleteProject(project),
+                    );
+                  }),
+                  
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.pop(context);
+                        _addProject();
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: DSColor.surfaceTint, width: 2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add, size: 20, color: DSColor.primary),
+                            SizedBox(width: 8),
+                            Text(
+                              'Nouveau projet',
+                              style: TextStyle(
+                                color: DSColor.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ],
               ),
-            );
-            }),
-            Divider(),
-            ListTile(
-              leading: Icon(Icons.add),
-              title: Text('Nouveau projet'),
-              onTap: () {
-                Navigator.pop(context);
-                _addProject();
-              },
             ),
-            Divider(),
-            ListTile(
-              leading: Icon(Icons.settings),
-              title: Text('Paramètres'),
+            
+            // Footer
+            _buildDrawerItem(
+              icon: Icons.settings_outlined,
+              label: 'Paramètres',
               onTap: () {
                 Navigator.pop(context);
                 _showSettings();
               },
             ),
+            SizedBox(height: MediaQuery.of(context).padding.bottom + 16), // Padding pour la barre de navigation Android
           ],
-        ),
-      ),
-      body: Column(
-        children: [
-          // Contrôles de tri
-          Container(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.sort, size: 16),
-                      const SizedBox(width: 6),
-                      Text(_getSortDisplayName()),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                IconButton(
-                  icon: const Icon(Icons.sort),
-                  onPressed: _showSortDialog,
-                ),
-                const Spacer(),
-                Text('${_filteredTodos.length} tâches'),
-              ],
             ),
-          ),
+          );
+        },
+      ),
+      body: DSBackdrop(
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // --- HEADER ---
+              Builder(
+                builder: (context) {
+                  final brightness = Theme.of(context).brightness;
+                  final headingColor = DSColor.getHeading(brightness);
+                  
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.menu, color: headingColor),
+                          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                        ),
+                        Expanded(
+                          child: Text(
+                            _getAppBarTitle(),
+                            style: DSTypo.h1.copyWith(color: headingColor),
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.mic, color: headingColor),
+                          onPressed: _addTodoByVoice,
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+
+              // --- SORT & STATS ---
+              Builder(
+                builder: (context) {
+                  final brightness = Theme.of(context).brightness;
+                  final surfaceColor = DSColor.getSurface(brightness);
+                  final bodyColor = DSColor.getBody(brightness);
+                  final mutedColor = DSColor.getMuted(brightness);
+                  
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      children: [
+                        InkWell(
+                          onTap: _showSortDialog,
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: surfaceColor.withOpacity(0.5),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.sort, size: 16, color: bodyColor),
+                                const SizedBox(width: 6),
+                                Text(_getSortDisplayName(), style: DSTypo.caption.copyWith(color: mutedColor)),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Text('${_filteredTodos.length} tâches', style: DSTypo.caption.copyWith(color: mutedColor)),
+                      ],
+                    ),
+                  );
+                },
+              ),
           // Zone de drop générale pour remettre une tâche au niveau racine
           DragTarget<TodoItem>(
             onWillAccept: (dragged) {
@@ -2170,342 +2410,115 @@ Texte: $text
               );
             },
           ),
-          // Liste des tâches
+          // --- TASK LIST ---
           Expanded(
             child: _filteredTodos.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.task_alt, size: 64, color: Colors.grey),
-                        const SizedBox(height: 16),
-                        Text(
-                          _selectedProject != null
-                              ? 'Aucune tâche dans "${_selectedProject!.name}"'
-                              : 'Aucune tâche pour le moment',
-                          style: TextStyle(fontSize: 18, color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  )
+                ? Center(child: Builder(
+                    builder: (context) => Text('Aucune tâche', style: DSTypo.bodyOf(context)),
+                  ))
                 : ListView.builder(
+                    padding: const EdgeInsets.only(top: 4, bottom: 100),
                     itemCount: _filteredTodos.length,
                     itemBuilder: (context, index) {
                       final todo = _filteredTodos[index];
-                      final isOverdue = todo.dueDate != null && 
-                          todo.dueDate!.isBefore(DateTime.now()) && 
-                          !todo.isCompleted;
-                      
-                      final hasSubTasks = _getVisibleSubTasks(todo.id).isNotEmpty;
-                      final isExpanded = _expandedTasks.contains(todo.id);
-                      final subTasks = isExpanded ? _getVisibleSubTasks(todo.id) : [];
-                      
-                      Widget itemContent = Column(
-                        children: [
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
-                            margin: EdgeInsets.only(
-                              left: 0, // Tâches principales complètement à gauche
-                              right: 16.0,
-                              top: 4.0,
-                              bottom: 4.0,
-                            ),
-                            child: AnimatedOpacity(
-                              opacity: todo.isCompleted ? 0.6 : 1.0,
-                              duration: const Duration(milliseconds: 300),
-                              child: Card(
-                                elevation: todo.isCompleted ? 1 : 2,
-                                child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                              leading: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Checkbox(
-                                    value: todo.isCompleted,
-                                    onChanged: (_) => _toggleTodo(todo.id),
-                                  ),
-                                  if (todo.isRecurring)
-                                    Icon(
-                                      Icons.repeat,
-                                      size: 16,
-                                      color: Colors.purple,
-                                    ),
-                                ],
-                              ),
-                              title: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Titre sur la première ligne avec icône de description
-                                  Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          todo.title,
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                            decoration: todo.isCompleted ? TextDecoration.lineThrough : null,
-                                            color: todo.isCompleted ? Colors.grey : Theme.of(context).textTheme.bodyLarge?.color,
-                                          ),
-                                          maxLines: 3, // Permettre jusqu'à 3 lignes
-                                          overflow: TextOverflow.visible, // Ne pas tronquer
-                                        ),
-                                      ),
-                                      if (todo.description.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(left: 8, top: 2),
-                                          child: Icon(
-                                            Icons.description,
-                                            size: 16,
-                                            color: Theme.of(context).hintColor,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  // Dates et récurrence sur la deuxième ligne
-                                  if (todo.dueDate != null || todo.reminder != null || todo.isRecurring)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 4),
-                                      child: Row(
-                                        children: [
-                                          if (todo.dueDate != null) ...[
-                                            Icon(Icons.calendar_today, size: 14),
-                                            const SizedBox(width: 2),
-                                            Text(
-                                              '${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}',
-                                              style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
-                                            ),
-                                          ],
-                                          if (todo.dueDate != null && (todo.reminder != null || todo.isRecurring))
-                                            const SizedBox(width: 12),
-                                          if (todo.reminder != null) ...[
-                                            Icon(Icons.alarm, size: 14),
-                                            const SizedBox(width: 2),
-                                            Text(
-                                              '${todo.reminder!.day}/${todo.reminder!.month}/${todo.reminder!.year} à ${todo.reminder!.hour.toString().padLeft(2, '0')}:${todo.reminder!.minute.toString().padLeft(2, '0')}',
-                                              style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor),
-                                            ),
-                                          ],
-                                          if (todo.reminder != null && todo.isRecurring)
-                                            const SizedBox(width: 12),
-                                          if (todo.isRecurring) ...[
-                                            Icon(Icons.repeat, size: 14, color: Colors.purple),
-                                            const SizedBox(width: 2),
-                                            Text(
-                                              '${todo.recurrenceText}${todo.recurrenceTimeText.isNotEmpty ? ' à ${todo.recurrenceTimeText}' : ''}',
-                                              style: TextStyle(fontSize: 12, color: Colors.purple, fontWeight: FontWeight.w500),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              subtitle: Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // Description (si activée dans les paramètres)
-                                    if (_showDescriptions && todo.description.isNotEmpty)
-                                      Padding(
-                                        padding: const EdgeInsets.only(bottom: 4),
-                                        child: Text(
-                                          todo.description,
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: todo.isCompleted ? Colors.grey : Theme.of(context).hintColor,
-                                            fontStyle: FontStyle.italic,
-                                          ),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    // Informations de temps et sous-tâches
-                                    Wrap(
-                                      crossAxisAlignment: WrapCrossAlignment.center,
-                                      spacing: 10,
-                                      runSpacing: 2,
-                                      children: [
-                                        if (todo.estimatedMinutes != null)
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const Icon(Icons.timer, size: 15),
-                                              const SizedBox(width: 2),
-                                              Text('Estimé : ${todo.estimatedTimeText}', style: const TextStyle(fontSize: 12)),
-                                            ],
-                                          ),
-                                        ...(TimerService().isTaskRunning(todo.id)
-                                          ? [
-                                              Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  const Icon(Icons.play_circle, size: 15, color: Colors.green),
-                                                  const SizedBox(width: 2),
-                                                  Text(
-                                                    _formatElapsedTime(todo.elapsedSeconds + TimerService().elapsedSeconds),
-                                                    style: const TextStyle(fontSize: 13, color: Colors.green),
-                                                  ),
-                                                ],
-                                              )
-                                            ]
-                                          : todo.elapsedSeconds > 0
-                                            ? [
-                                                Row(
-                                                  mainAxisSize: MainAxisSize.min,
-                                                  children: [
-                                                    const Icon(Icons.timelapse, size: 15),
-                                                    const SizedBox(width: 2),
-                                                    Text('Passé : ${_formatElapsedTime(todo.elapsedSeconds)}', style: const TextStyle(fontSize: 12)),
-                                                  ],
-                                                )
-                                              ]
-                                            : []),
-                                        if (hasSubTasks)
-                                          Container(
-                                            margin: const EdgeInsets.only(left: 4),
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: Colors.purple.withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              '${_getVisibleSubTasks(todo.id).length} sous-tâches',
-                                              style: TextStyle(fontSize: 12, color: Colors.purple),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(TimerService().isTaskRunning(todo.id) ? Icons.pause : Icons.play_arrow),
-                                    tooltip: TimerService().isTaskRunning(todo.id)
-                                        ? 'Mettre en pause le suivi du temps'
-                                        : 'Démarrer le suivi du temps',
-                                    onPressed: () => _handlePlayPause(todo),
-                                  ),
-                                  if (hasSubTasks)
-                                    IconButton(
-                                      icon: Icon(isExpanded ? Icons.expand_less : Icons.expand_more),
-                                      onPressed: () {
-                                        setState(() {
-                                          if (isExpanded) {
-                                            _expandedTasks.remove(todo.id);
-                                          } else {
-                                            _expandedTasks.add(todo.id);
-                                          }
-                                        });
-                                      },
-                                    ),
-                                ],
-                              ),
-                              onTap: () => _editTodo(todo),
-                            ),
-                          ),
-                        ),
-                      ),
-                          if (isExpanded && subTasks.isNotEmpty)
-                            ...subTasks.map((subTask) => _buildSubTaskItem(subTask, todo.id)),
-                        ],
-                      );
-
                       return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // Zone de drop pour remonter une tâche au niveau supérieur
-                          if (todo.parentId != null)
-                            DragTarget<TodoItem>(
-                              onWillAccept: (dragged) {
-                                if (dragged == null) return false;
-                                return dragged.id != todo.id && !_isDescendant(dragged.id, todo.id);
-                              },
-                              onAccept: (dragged) => _moveTaskToRoot(dragged.id),
-                              builder: (context, candidate, rejected) {
-                                return Container(
-                                  height: 20,
-                                  margin: const EdgeInsets.symmetric(horizontal: 16),
-                                  decoration: BoxDecoration(
-                                    color: candidate.isNotEmpty 
-                                      ? Theme.of(context).colorScheme.primary.withOpacity(0.3)
-                                      : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: candidate.isNotEmpty
-                                      ? Border.all(
-                                          color: Theme.of(context).colorScheme.primary,
-                                          width: 2,
-                                        )
-                                      : null,
-                                  ),
-                                  child: candidate.isNotEmpty
-                                    ? Center(
-                                        child: Text(
-                                          'Remonter au niveau supérieur',
-                                          style: TextStyle(
-                                            color: Theme.of(context).colorScheme.primary,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      )
-                                    : null,
-                                );
-                              },
+                          _buildDSTaskItem(todo),
+                          if (_expandedTasks.contains(todo.id))
+                            ..._getVisibleSubTasks(todo.id).map((subTask) => 
+                              Padding(
+                                padding: const EdgeInsets.only(left: 32),
+                                child: _buildDSTaskItem(subTask),
+                              ),
                             ),
-                          // Zone de drop pour déplacer une tâche sous cette tâche
-                          DragTarget<TodoItem>(
-                            onWillAccept: (dragged) {
-                              if (dragged == null) return false;
-                              return dragged.id != todo.id && !_isDescendant(dragged.id, todo.id) && todo.canHaveSubTasks && (todo.level + 1 + (_getDeepestLevel(dragged.id) - dragged.level) <= 3);
-                            },
-                            onAccept: (dragged) => _moveTaskToParent(dragged.id, todo.id),
-                            builder: (context, candidate, rejected) {
-                              return LongPressDraggable<TodoItem>(
-                                data: todo,
-                                feedback: _buildDragFeedback(todo),
-                                childWhenDragging: Opacity(opacity: 0.5, child: itemContent),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    border: candidate.isNotEmpty
-                                      ? Border.all(
-                                          color: Theme.of(context).colorScheme.secondary,
-                                          width: 2,
-                                        )
-                                      : null,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: itemContent,
-                                ),
-                              );
-                            },
-                          ),
                         ],
                       );
                     },
                   ),
           ),
-        ],
+            ],
+          ),
+        ),
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton(
-            heroTag: 'voice_add',
-            onPressed: _addTodoByVoice,
-            child: const Icon(Icons.mic),
+      floatingActionButton: Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [DSColor.primary, DSColor.accent],
           ),
-          const SizedBox(height: 8),
-          FloatingActionButton(
-            heroTag: 'text_add',
-            onPressed: _addTodo,
-            child: const Icon(Icons.add),
-          ),
-        ],
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: DSShadow.floating(DSColor.primary),
+        ),
+        child: FloatingActionButton(
+          onPressed: _addTodo,
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: const Icon(Icons.add, color: Colors.white),
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+    );
+  }
+
+  Widget _buildDSTaskItem(TodoItem todo) {
+    // Determine status
+    Widget statusWidget;
+    if (todo.isCompleted) {
+      statusWidget = const DSStatusTag.done();
+    } else if (_timerService.isTaskRunning(todo.id)) {
+      statusWidget = const DSStatusTag.inProgress();
+    } else {
+      statusWidget = const DSStatusTag.todo();
+    }
+
+    // Determine Project info
+    final project = _projects.firstWhere(
+      (p) => p.id == todo.projectId,
+      orElse: () => Project(id: -1, name: 'Général', color: Colors.grey, icon: Icons.list),
+    );
+
+    final hasSubTasks = _getVisibleSubTasks(todo.id).isNotEmpty;
+    final isExpanded = _expandedTasks.contains(todo.id);
+
+    return GestureDetector(
+      onTap: () {
+        if (hasSubTasks) {
+          // Toggle expansion si la tâche a des sous-tâches
+          setState(() {
+            if (isExpanded) {
+              _expandedTasks.remove(todo.id);
+            } else {
+              _expandedTasks.add(todo.id);
+            }
+          });
+        } else {
+          // Sinon, ouvrir le modal d'édition
+          _editTodo(todo);
+        }
+      },
+      onLongPress: () => _editTodo(todo), // Long press pour éditer même avec sous-tâches
+      child: DSTaskCard(
+        categoryIcon: project.icon,
+        categoryColor: project.color,
+        category: project.name,
+        title: todo.title,
+        time: todo.dueDate != null 
+             ? "${todo.dueDate!.day}/${todo.dueDate!.month} ${todo.dueDate!.hour}:${todo.dueDate!.minute.toString().padLeft(2, '0')}"
+             : "Pas de date",
+        status: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (hasSubTasks)
+              Icon(
+                isExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
+                size: 16,
+                color: DSColor.muted,
+              ),
+            const SizedBox(width: 4),
+            statusWidget,
+          ],
+        ),
+        isCompleted: todo.isCompleted,
       ),
     );
   }
@@ -2663,359 +2676,398 @@ class _AddTodoModalState extends State<AddTodoModal> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    
     return Padding(
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
+        bottom: keyboardHeight,
       ),
-      child: SingleChildScrollView(
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
+      child: Builder(
+        builder: (context) {
+          final brightness = Theme.of(context).brightness;
+          final surfaceSoftColor = DSColor.getSurfaceSoft(brightness);
+          final surfaceColor = DSColor.getSurface(brightness);
+          final headingColor = DSColor.getHeading(brightness);
+          final mutedColor = DSColor.getMuted(brightness);
+          
+          return SingleChildScrollView(
+            child: Container(
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                top: 24,
+                bottom: 24 + bottomPadding + 16, // Padding supplémentaire pour la barre de navigation Android
+              ),
+              decoration: BoxDecoration(
+                color: surfaceSoftColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Nouvelle Tâche',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text('Nouvelle Tâche', style: DSTypo.h1Of(context)),
                   IconButton(
-                    icon: const Icon(Icons.close),
+                    icon: Icon(Icons.close, color: headingColor),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              // Projet
-              DropdownButtonFormField<Project?>(
-                value: _selectedProject,
-                decoration: const InputDecoration(
-                  labelText: 'Projet (optionnel)',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<Project?>(
-                    value: null,
-                    child: Row(
-                      children: [
-                        Icon(Icons.folder_off, color: Colors.grey),
-                        SizedBox(width: 8),
-                        Text('Aucun projet'),
-                      ],
-                    ),
-                  ),
-                  ...widget.projects.map((project) {
-                    return DropdownMenuItem<Project?>(
-                      value: project,
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: project.color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(project.name),
-                        ],
-                      ),
-                    );
-                  }),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _selectedProject = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              // Titre
-              TextField(
-                controller: _titleController,
-                decoration: InputDecoration(
-                  labelText: 'Titre de la tâche *',
-                  border: const OutlineInputBorder(),
-                  helperText: '${_titleController.text.length}/200 caractères',
-                  errorText: _titleController.text.length > 200 
-                    ? 'Le titre ne peut pas dépasser 200 caractères'
-                    : null,
-                ),
-                onChanged: (value) {
-                  setState(() {
-                    // Forcer la mise à jour pour afficher le compteur
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              // Description
-              TextField(
-                controller: _descriptionController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Description (optionnel)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Date d'échéance
-              TextField(
-                readOnly: true,
-                controller: TextEditingController(
-                  text: _selectedDate != null
-                      ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
-                      : '',
-                ),
-                onTap: () async {
-                  final date = await showDatePicker(
-                    context: context,
-                    initialDate: _selectedDate ?? DateTime.now(),
-                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                    lastDate: DateTime.now().add(const Duration(days: 365)),
-                  );
-                  if (date != null) {
-                    setState(() {
-                      _selectedDate = date;
-                    });
-                  }
-                },
-                decoration: InputDecoration(
-                  labelText: 'Date d\'échéance (optionnel)',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.calendar_today),
-                  suffixIcon: _selectedDate != null
-                      ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            setState(() {
-                              _selectedDate = null;
-                            });
-                          },
-                        )
-                      : null,
-                ),
-                style: TextStyle(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.white
-                      : Colors.black,
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Rappel
-              TextField(
-                readOnly: true,
-                controller: TextEditingController(
-                  text: _selectedReminder != null
-                      ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
-                      : '',
-                ),
-                onTap: () async {
-                  final date = await showDatePicker(
-                    context: context,
-                    initialDate: _selectedReminder ?? DateTime.now(),
-                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                    lastDate: DateTime.now().add(const Duration(days: 365)),
-                  );
-                  if (date != null) {
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: _selectedReminder != null
-                          ? TimeOfDay(hour: _selectedReminder!.hour, minute: _selectedReminder!.minute)
-                          : TimeOfDay.now(),
-                    );
-                    if (time != null) {
-                      setState(() {
-                        _selectedReminder = DateTime(
-                          date.year,
-                          date.month,
-                          date.day,
-                          time.hour,
-                          time.minute,
-                        );
-                      });
-                    }
-                  }
-                },
-                decoration: InputDecoration(
-                  labelText: 'Rappel (optionnel)',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.alarm),
-                  suffixIcon: _selectedReminder != null
-                      ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            setState(() {
-                              _selectedReminder = null;
-                            });
-                          },
-                        )
-                      : null,
-                ),
-                style: TextStyle(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.white
-                      : Colors.black,
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Priorité
-              DropdownButtonFormField<Priority>(
-                value: _selectedPriority,
-                decoration: const InputDecoration(
-                  labelText: 'Priorité',
-                  border: OutlineInputBorder(),
-                ),
-                items: Priority.values.map((priority) {
-                  return DropdownMenuItem(
-                    value: priority,
-                      child: Text(getPriorityText(priority)),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      _selectedPriority = value;
-                    });
-                  }
-                },
-              ),
-              const SizedBox(height: 16),
-              // Temps estimé
-              TextField(
-                controller: _estimatedTimeController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Temps estimé (en minutes, optionnel)',
-                  border: OutlineInputBorder(),
-                  hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
-                  prefixIcon: Icon(Icons.timer),
-                ),
-              ),
               const SizedBox(height: 24),
-                // Section Sous-tâches
-                const Text(
-                  'Sous-tâches (optionnel)',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _subTaskController,
-                        decoration: const InputDecoration(
-                          labelText: 'Ajouter une sous-tâche',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _addSubTask,
-                      child: const Icon(Icons.add),
+              
+              // Projet
+              Text('Projet', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: headingColor)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: surfaceColor,
+                  borderRadius: DSRadius.soft,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                if (_subTasks.isEmpty)
-                  const Text('Aucune sous-tâche ajoutée.'),
-                if (_subTasks.isNotEmpty)
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _subTasks.length,
-                    itemBuilder: (context, index) {
-                      final subTask = _subTasks[index];
-                      return ListTile(
-                        leading: const Icon(Icons.subdirectory_arrow_right),
-                        title: Text(subTask.title),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () {
-                            setState(() {
-                              _subTasks.removeAt(index);
-                            });
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<Project?>(
+                    value: _selectedProject,
+                    isExpanded: true,
+                    icon: const Icon(Icons.keyboard_arrow_down, color: DSColor.primary),
+                    items: [
+                      DropdownMenuItem<Project?>(
+                        value: null,
+                        child: Builder(
+                          builder: (context) {
+                            final brightness = Theme.of(context).brightness;
+                            final mutedColor = DSColor.getMuted(brightness);
+                            return Row(
+                              children: [
+                                Icon(Icons.folder_off, color: mutedColor, size: 20),
+                                const SizedBox(width: 8),
+                                Text('Aucun projet', style: DSTypo.bodyOf(context)),
+                              ],
+                            );
                           },
                         ),
-                      );
+                      ),
+                      ...widget.projects.map((project) {
+                        return DropdownMenuItem<Project?>(
+                          value: project,
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(
+                                  color: project.color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(project.name, style: DSTypo.body),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedProject = value;
+                      });
                     },
                   ),
-                const SizedBox(height: 24),
-              // Boutons
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Titre
+              DSTextField(
+                label: 'Titre *',
+                controller: _titleController,
+                hint: 'Qu\'avez-vous à faire ?',
+                helperText: '${_titleController.text.length}/200 caractères',
+                errorText: _titleController.text.length > 200 
+                  ? 'Le titre ne peut pas dépasser 200 caractères'
+                  : null,
+                onChanged: (value) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
+
+              // Description
+              DSTextField(
+                label: 'Description',
+                controller: _descriptionController,
+                hint: 'Détails supplémentaires (optionnel)',
+                maxLines: 3,
+              ),
+              const SizedBox(height: 16),
+
+              // Date & Rappel Row
               Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Annuler'),
+                    child: DSTextField(
+                      label: 'Échéance',
+                      readOnly: true,
+                      controller: TextEditingController(
+                        text: _selectedDate != null
+                            ? '${_selectedDate!.day}/${_selectedDate!.month}'
+                            : '',
+                      ),
+                      hint: 'Date',
+                      prefixIcon: const Icon(Icons.calendar_today, size: 18, color: DSColor.primary),
+                      suffixIcon: _selectedDate != null
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18, color: DSColor.muted),
+                              onPressed: () => setState(() => _selectedDate = null),
+                            )
+                          : null,
+                      onTap: () async {
+                        final date = await showDatePicker(
+                          context: context,
+                          initialDate: _selectedDate ?? DateTime.now(),
+                          firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (date != null) {
+                          setState(() => _selectedDate = date);
+                        }
+                      },
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: ElevatedButton(
-                        onPressed: _titleController.text.trim().isEmpty || _titleController.text.length > 200
-                            ? null
-                            : () {
-                                // Validation de la longueur du titre
-                                if (_titleController.text.length > 200) {
+                    child: DSTextField(
+                      label: 'Rappel',
+                      readOnly: true,
+                      controller: TextEditingController(
+                        text: _selectedReminder != null
+                            ? '${_selectedReminder!.hour}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
+                            : '',
+                      ),
+                      hint: 'Heure',
+                      prefixIcon: const Icon(Icons.alarm, size: 18, color: DSColor.primary),
+                      suffixIcon: _selectedReminder != null
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18, color: DSColor.muted),
+                              onPressed: () => setState(() => _selectedReminder = null),
+                            )
+                          : null,
+                      onTap: () async {
+                        final date = await showDatePicker(
+                          context: context,
+                          initialDate: _selectedReminder ?? DateTime.now(),
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (date != null) {
+                          final time = await showTimePicker(
+                            context: context,
+                            initialTime: TimeOfDay.now(),
+                          );
+                          if (time != null) {
+                            setState(() {
+                              _selectedReminder = DateTime(
+                                date.year,
+                                date.month,
+                                date.day,
+                                time.hour,
+                                time.minute,
+                              );
+                            });
+                          }
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Priorité & Temps Row
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Priorité', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: headingColor)),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: surfaceColor,
+                            borderRadius: DSRadius.soft,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.03),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<Priority>(
+                              value: _selectedPriority,
+                              isExpanded: true,
+                              icon: const Icon(Icons.keyboard_arrow_down, color: DSColor.primary),
+                              items: Priority.values.map((priority) {
+                                return DropdownMenuItem(
+                                  value: priority,
+                                  child: Text(getPriorityText(priority), style: DSTypo.body),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                if (value != null) setState(() => _selectedPriority = value);
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: DSTextField(
+                      label: 'Durée (min)',
+                      controller: _estimatedTimeController,
+                      hint: '30',
+                      prefixIcon: const Icon(Icons.timer, size: 18, color: DSColor.primary),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+
+              // Sous-tâches
+              Text('Sous-tâches', style: DSTypo.h2Of(context)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: DSTextField(
+                      label: '',
+                      controller: _subTaskController,
+                      hint: 'Ajouter une étape...',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 24), // Align with input
+                    child: IconButton(
+                      onPressed: _addSubTask,
+                      icon: const Icon(Icons.add_circle, color: DSColor.primary, size: 32),
+                    ),
+                  ),
+                ],
+              ),
+              if (_subTasks.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _subTasks.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final subTask = _subTasks[index];
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: surfaceSoftColor,
+                          borderRadius: DSRadius.soft,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.check_circle_outline, size: 16, color: mutedColor),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(subTask.title, style: DSTypo.bodyOf(context))),
+                            IconButton(
+                            icon: const Icon(Icons.close, size: 18, color: Colors.red),
+                            onPressed: () => setState(() => _subTasks.removeAt(index)),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+              const SizedBox(height: 32),
+
+              // Actions
+              Row(
+                children: [
+                  Expanded(
+                    child: DSButton.secondary(
+                      label: 'Annuler',
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: DSButton(
+                      label: 'Créer',
+                      onPressed: _titleController.text.trim().isEmpty || _titleController.text.length > 200
+                          ? null
+                          : () {
+                              // Validation logic identical to before...
+                              if (_titleController.text.length > 200) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Le titre ne peut pas dépasser 200 caractères')),
+                                );
+                                return;
+                              }
+                              
+                              int? estimatedMinutes;
+                              if (_estimatedTimeController.text.trim().isNotEmpty) {
+                                try {
+                                  estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
+                                  if (estimatedMinutes <= 0) throw Exception();
+                                } catch (e) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Le titre ne peut pas dépasser 200 caractères')),
+                                    const SnackBar(content: Text('Temps estimé invalide')),
                                   );
                                   return;
                                 }
-                                
-                                // Parser le temps estimé
-                                int? estimatedMinutes;
-                                if (_estimatedTimeController.text.trim().isNotEmpty) {
-                                  try {
-                                    estimatedMinutes = int.parse(_estimatedTimeController.text.trim());
-                                    if (estimatedMinutes <= 0) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Le temps estimé doit être un nombre positif')),
-                                      );
-                                      return;
-                                    }
-                                  } catch (e) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Veuillez entrer un nombre valide pour le temps estimé')),
-                                    );
-                                    return;
-                                  }
-                                }
-                                final newTodo = TodoItem(
-                                  id: DateTime.now().millisecondsSinceEpoch,
-                                  title: _titleController.text.trim(),
-                                  description: _descriptionController.text.trim(),
-                                  dueDate: _selectedDate,
-                                  priority: _selectedPriority,
-                                  projectId: _selectedProject?.id,
-                                  isCompleted: false,
-                                  parentId: null, // Tâche racine
-                                  level: 0,
-                                  reminder: _selectedReminder,
-                                  estimatedMinutes: estimatedMinutes,
-                                  elapsedMinutes: 0,
-                                  elapsedSeconds: 0,
-                                );
-                                Navigator.pop(context, {
-                                  'todo': newTodo,
-                                  'subTasks': _subTasks,
-                                });
-                              },
-                        child: const Text('Ajouter'),
+                              }
+
+                              final newTodo = TodoItem(
+                                id: DateTime.now().millisecondsSinceEpoch,
+                                title: _titleController.text.trim(),
+                                description: _descriptionController.text.trim(),
+                                dueDate: _selectedDate,
+                                priority: _selectedPriority,
+                                projectId: _selectedProject?.id,
+                                isCompleted: false,
+                                parentId: null,
+                                level: 0,
+                                reminder: _selectedReminder,
+                                estimatedMinutes: estimatedMinutes,
+                                elapsedMinutes: 0,
+                                elapsedSeconds: 0,
+                              );
+                              Navigator.pop(context, {
+                                'todo': newTodo,
+                                'subTasks': _subTasks,
+                              });
+                            },
                     ),
                   ),
                 ],
               ),
             ],
-          ),
-        ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -3154,133 +3206,165 @@ class _EditTodoModalState extends State<EditTodoModal> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    
     return Padding(
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        top: MediaQuery.of(context).padding.top + 16, // Ajouter un padding pour éviter la zone de statut
+        bottom: keyboardHeight,
+        top: MediaQuery.of(context).padding.top + 16,
       ),
-      child: SingleChildScrollView(
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
+      child: Builder(
+        builder: (context) {
+          final brightness = Theme.of(context).brightness;
+          final surfaceSoftColor = DSColor.getSurfaceSoft(brightness);
+          final surfaceColor = DSColor.getSurface(brightness);
+          final headingColor = DSColor.getHeading(brightness);
+          final mutedColor = DSColor.getMuted(brightness);
+          
+          return SingleChildScrollView(
+            child: Container(
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                top: 24,
+                bottom: 24 + bottomPadding + 16, // Padding supplémentaire pour la barre de navigation Android
+              ),
+              decoration: BoxDecoration(
+                color: surfaceSoftColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Modifier la Tâche',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text('Modifier la Tâche', style: DSTypo.h1Of(context)),
                   IconButton(
-                    icon: const Icon(Icons.close),
+                    icon: Icon(Icons.close, color: headingColor),
                     onPressed: () {
                       debugPrint('🔄 [EditTodoModal] Bouton fermer (X) cliqué');
-                      
-                      // Sauvegarder automatiquement avant de fermer
                       _saveChanges();
-                      
-                      // Forcer un rafraîchissement complet de la vue
                       widget.homeState.setState(() {
                         debugPrint('🔄 [EditTodoModal] setState() appelé après clic sur X');
                       });
-                      
                       debugPrint('🔄 [EditTodoModal] Fermeture du modal...');
                       Navigator.pop(context);
                     },
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 24),
               
               // Projet
-              DropdownButtonFormField<Project?>(
-                value: _selectedProject,
-                decoration: const InputDecoration(
-                  labelText: 'Projet (optionnel)',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<Project?>(
-                    value: null,
-                    child: Row(
-                      children: [
-                        Icon(Icons.folder_off, color: Colors.grey),
-                        SizedBox(width: 8),
-                        Text('Aucun projet'),
-                      ],
+              Text('Projet', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: headingColor)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: surfaceColor,
+                  borderRadius: DSRadius.soft,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
                     ),
-                  ),
-                  ...widget.projects.map((project) {
-                    return DropdownMenuItem<Project?>(
-                      value: project,
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: project.color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(project.name),
-                        ],
+                  ],
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<Project?>(
+                    value: _selectedProject,
+                    isExpanded: true,
+                    icon: const Icon(Icons.keyboard_arrow_down, color: DSColor.primary),
+                    items: [
+                      DropdownMenuItem<Project?>(
+                        value: null,
+                        child: Builder(
+                          builder: (context) {
+                            final brightness = Theme.of(context).brightness;
+                            final mutedColor = DSColor.getMuted(brightness);
+                            return Row(
+                              children: [
+                                Icon(Icons.folder_off, color: mutedColor, size: 20),
+                                const SizedBox(width: 8),
+                                Text('Aucun projet', style: DSTypo.bodyOf(context)),
+                              ],
+                            );
+                          },
+                        ),
                       ),
-                    );
-                  }),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _selectedProject = value;
-                  });
-                },
+                      ...widget.projects.map((project) {
+                        return DropdownMenuItem<Project?>(
+                          value: project,
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(
+                                  color: project.color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(project.name, style: DSTypo.body),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedProject = value;
+                      });
+                    },
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
               
               // Titre
-              TextField(
+              DSTextField(
+                label: 'Titre *',
                 controller: _titleController,
-                decoration: InputDecoration(
-                  labelText: 'Titre de la tâche *',
-                  border: const OutlineInputBorder(),
-                  helperText: '${_titleController.text.length}/200 caractères',
-                  errorText: _titleController.text.length > 200 
+                hint: 'Qu\'avez-vous à faire ?',
+                helperText: '${_titleController.text.length}/200 caractères',
+                errorText: _titleController.text.length > 200
                     ? 'Le titre ne peut pas dépasser 200 caractères'
                     : null,
-                ),
-                onChanged: (value) {
-                  setState(() {
-                    // Forcer la mise à jour pour afficher le compteur
-                  });
-                },
+                onChanged: (value) => setState(() {}),
               ),
               const SizedBox(height: 16),
               
               // Description
-              TextField(
+              DSTextField(
+                label: 'Description',
                 controller: _descriptionController,
+                hint: 'Détails supplémentaires (optionnel)',
                 maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Description (optionnel)',
-                  border: OutlineInputBorder(),
-                ),
               ),
               const SizedBox(height: 16),
               
               // Date d'échéance
-              TextField(
+              DSTextField(
+                label: 'Date d\'échéance',
                 readOnly: true,
                 controller: TextEditingController(
                   text: _selectedDate != null
                       ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
                       : '',
                 ),
+                hint: 'Date',
+                prefixIcon: const Icon(Icons.calendar_today, size: 18, color: DSColor.primary),
+                suffixIcon: _selectedDate != null
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18, color: DSColor.muted),
+                        onPressed: () => setState(() => _selectedDate = null),
+                      )
+                    : null,
                 onTap: () async {
                   final date = await showDatePicker(
                     context: context,
@@ -3289,41 +3373,29 @@ class _EditTodoModalState extends State<EditTodoModal> {
                     lastDate: DateTime.now().add(const Duration(days: 365)),
                   );
                   if (date != null) {
-                    setState(() {
-                      _selectedDate = date;
-                    });
+                    setState(() => _selectedDate = date);
                   }
                 },
-                decoration: InputDecoration(
-                  labelText: 'Date d\'échéance (optionnel)',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.calendar_today),
-                  suffixIcon: _selectedDate != null
-                      ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            setState(() {
-                              _selectedDate = null;
-                            });
-                          },
-                        )
-                      : null,
-                ),
-                style: TextStyle(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.white
-                      : Colors.black,
-                ),
               ),
               const SizedBox(height: 16),
+              
               // Rappel
-              TextField(
+              DSTextField(
+                label: 'Rappel',
                 readOnly: true,
                 controller: TextEditingController(
                   text: _selectedReminder != null
                       ? '${_selectedReminder!.day}/${_selectedReminder!.month}/${_selectedReminder!.year} à ${_selectedReminder!.hour.toString().padLeft(2, '0')}:${_selectedReminder!.minute.toString().padLeft(2, '0')}'
                       : '',
                 ),
+                hint: 'Heure',
+                prefixIcon: const Icon(Icons.alarm, size: 18, color: DSColor.primary),
+                suffixIcon: _selectedReminder != null
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18, color: DSColor.muted),
+                        onPressed: () => setState(() => _selectedReminder = null),
+                      )
+                    : null,
                 onTap: () async {
                   final date = await showDatePicker(
                     context: context,
@@ -3351,110 +3423,126 @@ class _EditTodoModalState extends State<EditTodoModal> {
                     }
                   }
                 },
-                decoration: InputDecoration(
-                  labelText: 'Rappel (optionnel)',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.alarm),
-                  suffixIcon: _selectedReminder != null
-                      ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            setState(() {
-                              _selectedReminder = null;
-                            });
-                          },
-                        )
-                      : null,
-                ),
-                style: TextStyle(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.white
-                      : Colors.black,
-                ),
               ),
               const SizedBox(height: 16),
-              // Priorité
-              DropdownButtonFormField<Priority>(
-                value: _selectedPriority,
-                decoration: const InputDecoration(
-                  labelText: 'Priorité',
-                  border: OutlineInputBorder(),
-                ),
-                items: Priority.values.map((priority) {
-                  return DropdownMenuItem(
-                    value: priority,
-                      child: Text(getPriorityText(priority)),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      _selectedPriority = value;
-                    });
-                  }
-                },
+              
+              // Priorité & Temps Row
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Priorité', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: headingColor)),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: surfaceColor,
+                            borderRadius: DSRadius.soft,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.03),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<Priority>(
+                              value: _selectedPriority,
+                              isExpanded: true,
+                              icon: const Icon(Icons.keyboard_arrow_down, color: DSColor.primary),
+                              items: Priority.values.map((priority) {
+                                return DropdownMenuItem(
+                                  value: priority,
+                                  child: Text(getPriorityText(priority), style: DSTypo.body),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                if (value != null) setState(() => _selectedPriority = value);
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: DSTextField(
+                      label: 'Durée (min)',
+                      controller: _estimatedTimeController,
+                      hint: '30',
+                      prefixIcon: const Icon(Icons.timer, size: 18, color: DSColor.primary),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              // Temps estimé
-              TextField(
-                controller: _estimatedTimeController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Temps estimé (en minutes, optionnel)',
-                  border: OutlineInputBorder(),
-                  hintText: 'Ex: 30 pour 30 minutes, 90 pour 1h30',
-                  prefixIcon: Icon(Icons.timer),
-                ),
-              ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 24),
               
               // Section Récurrence
-              const Text(
-                'Récurrence',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
+              Text('Récurrence', style: DSTypo.h2Of(context)),
               const SizedBox(height: 8),
-              
-              // Type de récurrence
-              DropdownButtonFormField<RecurrenceType>(
-                value: _selectedRecurrenceType,
-                decoration: const InputDecoration(
-                  labelText: 'Type de récurrence',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.repeat),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: DSColor.surface,
+                  borderRadius: DSRadius.soft,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                items: RecurrenceType.values.map((type) {
-                  return DropdownMenuItem(
-                    value: type,
-                    child: Text(_getRecurrenceTypeText(type)),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      _selectedRecurrenceType = value;
-                      // Réinitialiser les paramètres spécifiques si nécessaire
-                      if (value == RecurrenceType.none) {
-                        _selectedRecurrenceDayOfWeek = null;
-                        _selectedRecurrenceDayOfMonth = null;
-                        _selectedRecurrenceTime = null;
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<RecurrenceType>(
+                    value: _selectedRecurrenceType,
+                    isExpanded: true,
+                    icon: const Icon(Icons.keyboard_arrow_down, color: DSColor.primary),
+                    items: RecurrenceType.values.map((type) {
+                      return DropdownMenuItem(
+                        value: type,
+                        child: Text(_getRecurrenceTypeText(type), style: DSTypo.body),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _selectedRecurrenceType = value;
+                          if (value == RecurrenceType.none) {
+                            _selectedRecurrenceDayOfWeek = null;
+                            _selectedRecurrenceDayOfMonth = null;
+                            _selectedRecurrenceTime = null;
+                          }
+                        });
                       }
-                    });
-                  }
-                },
+                    },
+                  ),
+                ),
               ),
               const SizedBox(height: 8),
               
               // Paramètres spécifiques selon le type de récurrence
               if (_selectedRecurrenceType != RecurrenceType.none) ...[
-                // Heure de récurrence
-                TextField(
+                DSTextField(
+                  label: 'Heure de récurrence *',
                   readOnly: true,
                   controller: TextEditingController(
                     text: _selectedRecurrenceTime != null
                         ? '${_selectedRecurrenceTime!.hour.toString().padLeft(2, '0')}:${_selectedRecurrenceTime!.minute.toString().padLeft(2, '0')}'
                         : '',
                   ),
+                  hint: 'Heure',
+                  prefixIcon: const Icon(Icons.access_time, size: 18, color: DSColor.primary),
+                  suffixIcon: _selectedRecurrenceTime != null
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18, color: DSColor.muted),
+                          onPressed: () => setState(() => _selectedRecurrenceTime = null),
+                        )
+                      : null,
                   onTap: () async {
                     final time = await showTimePicker(
                       context: context,
@@ -3466,251 +3554,257 @@ class _EditTodoModalState extends State<EditTodoModal> {
                       });
                     }
                   },
-                  decoration: InputDecoration(
-                    labelText: 'Heure de récurrence *',
-                    border: const OutlineInputBorder(),
-                    prefixIcon: const Icon(Icons.access_time),
-                    suffixIcon: _selectedRecurrenceTime != null
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              setState(() {
-                                _selectedRecurrenceTime = null;
-                              });
-                            },
-                          )
-                        : null,
-                  ),
                 ),
                 const SizedBox(height: 8),
                 
                 // Paramètres spécifiques pour hebdomadaire
                 if (_selectedRecurrenceType == RecurrenceType.weekly) ...[
-                  DropdownButtonFormField<int>(
-                    value: _selectedRecurrenceDayOfWeek,
-                    decoration: const InputDecoration(
-                      labelText: 'Jour de la semaine *',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.calendar_view_week),
-                    ),
-                    items: [
-                      DropdownMenuItem(value: 1, child: Text('Lundi')),
-                      DropdownMenuItem(value: 2, child: Text('Mardi')),
-                      DropdownMenuItem(value: 3, child: Text('Mercredi')),
-                      DropdownMenuItem(value: 4, child: Text('Jeudi')),
-                      DropdownMenuItem(value: 5, child: Text('Vendredi')),
-                      DropdownMenuItem(value: 6, child: Text('Samedi')),
-                      DropdownMenuItem(value: 7, child: Text('Dimanche')),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Jour de la semaine *', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: headingColor)),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: surfaceColor,
+                              borderRadius: DSRadius.soft,
+                              boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.03),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: _selectedRecurrenceDayOfWeek,
+                            isExpanded: true,
+                            icon: const Icon(Icons.keyboard_arrow_down, color: DSColor.primary),
+                            items: [
+                              DropdownMenuItem(value: 1, child: Builder(
+                                builder: (context) => Text('Lundi', style: DSTypo.bodyOf(context)),
+                              )),
+                              DropdownMenuItem(value: 2, child: Builder(
+                                builder: (context) => Text('Mardi', style: DSTypo.bodyOf(context)),
+                              )),
+                              DropdownMenuItem(value: 3, child: Builder(
+                                builder: (context) => Text('Mercredi', style: DSTypo.bodyOf(context)),
+                              )),
+                              DropdownMenuItem(value: 4, child: Builder(
+                                builder: (context) => Text('Jeudi', style: DSTypo.bodyOf(context)),
+                              )),
+                              DropdownMenuItem(value: 5, child: Builder(
+                                builder: (context) => Text('Vendredi', style: DSTypo.bodyOf(context)),
+                              )),
+                              DropdownMenuItem(value: 6, child: Builder(
+                                builder: (context) => Text('Samedi', style: DSTypo.bodyOf(context)),
+                              )),
+                              DropdownMenuItem(value: 7, child: Builder(
+                                builder: (context) => Text('Dimanche', style: DSTypo.bodyOf(context)),
+                              )),
+                            ],
+                            onChanged: (value) {
+                              setState(() => _selectedRecurrenceDayOfWeek = value);
+                            },
+                          ),
+                        ),
+                      ),
                     ],
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedRecurrenceDayOfWeek = value;
-                      });
-                    },
                   ),
                   const SizedBox(height: 8),
                 ],
                 
                 // Paramètres spécifiques pour mensuel
                 if (_selectedRecurrenceType == RecurrenceType.monthly) ...[
-                  DropdownButtonFormField<int>(
-                    value: _selectedRecurrenceDayOfMonth,
-                    decoration: const InputDecoration(
-                      labelText: 'Jour du mois *',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.calendar_month),
-                    ),
-                    items: List.generate(31, (index) {
-                      return DropdownMenuItem(
-                        value: index + 1,
-                        child: Text('${index + 1}'),
-                      );
-                    }),
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedRecurrenceDayOfMonth = value;
-                      });
-                    },
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Jour du mois *', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: headingColor)),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: surfaceColor,
+                              borderRadius: DSRadius.soft,
+                              boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.03),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: _selectedRecurrenceDayOfMonth,
+                            isExpanded: true,
+                            icon: const Icon(Icons.keyboard_arrow_down, color: DSColor.primary),
+                            items: List.generate(31, (index) {
+                              return DropdownMenuItem(
+                                value: index + 1,
+                                child: Text('${index + 1}', style: DSTypo.body),
+                              );
+                            }),
+                            onChanged: (value) {
+                              setState(() => _selectedRecurrenceDayOfMonth = value);
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 8),
                 ],
               ],
               
               const SizedBox(height: 24),
-                // Section Sous-tâches
-                if (widget.todo.canHaveSubTasks) ...[
-                  const Text(
-                    'Sous-tâches',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _subTaskController,
-                          decoration: const InputDecoration(
-                            labelText: 'Ajouter une sous-tâche',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
+              
+              // Section Sous-tâches
+              if (widget.todo.canHaveSubTasks) ...[
+                Text('Sous-tâches', style: DSTypo.h2Of(context)),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DSTextField(
+                        label: '',
+                        controller: _subTaskController,
+                        hint: 'Ajouter une étape...',
                       ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
+                    ),
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 24),
+                      child: IconButton(
                         onPressed: _addSubTask,
-                        child: const Icon(Icons.add),
+                        icon: const Icon(Icons.add_circle, color: DSColor.primary, size: 32),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (_subTasks.isEmpty)
-                    const Text('Aucune sous-tâche.'),
-                  if (_subTasks.isNotEmpty)
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _subTasks.length,
-                      itemBuilder: (context, index) {
-                        final subTask = _subTasks[index];
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 2),
-                          child: InkWell(
-                            onTap: () {
-                              debugPrint('🟢 [EditTodoModal] Clic sur sous-tâche: ${subTask.title} (ID: ${subTask.id})');
-                              // Utiliser le callback si disponible, sinon essayer de trouver le homeState
-                              if (widget.onEditSubTask != null) {
-                                debugPrint('🟢 [EditTodoModal] Utilisation du callback onEditSubTask');
-                                widget.onEditSubTask!(subTask);
-                              } else {
-                                debugPrint('🟢 [EditTodoModal] Tentative de récupération du homeState');
-                                final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
-                                debugPrint('🟢 [EditTodoModal] homeState trouvé: ${homeState != null}');
-                                if (homeState != null) {
-                                  final subTasks = homeState._getVisibleSubTasks(subTask.id);
-                                  debugPrint('🟢 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
-                                  showModalBottomSheet(
-                                    context: context,
-                                    isScrollControlled: true,
-                                    builder: (context) => EditTodoModal(
-                                      todo: subTask,
-                                      projects: homeState._projects,
-                                      subTasks: subTasks,
-                                      onAddSubTask: (newSubTask) {
-                                        debugPrint('🟢 [EditTodoModal] Ajout de sous-tâche: ${newSubTask.title}');
-                                        homeState.setState(() {
-                                          homeState._todos.add(newSubTask);
-                                        });
-                                      },
-                                      onToggleSubTask: (id) {
-                                        debugPrint('🟢 [EditTodoModal] Toggle sous-tâche: $id');
-                                        homeState.setState(() {
-                                          final index = homeState._todos.indexWhere((t) => t.id == id);
-                                          if (index != -1) {
-                                            homeState._todos[index].isCompleted = !homeState._todos[index].isCompleted;
-                                          }
-                                        });
-                                      },
-                                      onDeleteTodo: (id) {
-                                        debugPrint('🟢 [EditTodoModal] Suppression de tâche: $id');
-                                        homeState._deleteTodo(id);
-                                      },
-                                      onEditSubTask: (nestedSubTask) {
-                                        // Appeler la même fonction récursive
-                                        homeState._openEditModal(nestedSubTask);
-                                      },
-                                      homeState: homeState,
-                                    ),
-                                  );
-                                  debugPrint('🟢 [EditTodoModal] Modal ouvert pour sous-tâche');
-                                } else {
-                                  debugPrint('🔴 [EditTodoModal] ERREUR: homeState non trouvé!');
+                    ),
+                  ],
+                ),
+                if (_subTasks.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _subTasks.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final subTask = _subTasks[index];
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: DSColor.surfaceSoft,
+                          borderRadius: DSRadius.soft,
+                        ),
+                        child: Row(
+                          children: [
+                            Checkbox(
+                              value: subTask.isCompleted,
+                              onChanged: (_) {
+                                debugPrint('🟢 [EditTodoModal] Toggle checkbox sous-tâche: ${subTask.title} (ID: ${subTask.id})');
+                                if (widget.onToggleSubTask != null) {
+                                  widget.onToggleSubTask!(subTask.id);
                                 }
-                              }
-                            },
-                            child: ListTile(
-                              leading: Checkbox(
-                                value: subTask.isCompleted,
-                                onChanged: (_) {
-                                  debugPrint('🟢 [EditTodoModal] Toggle checkbox sous-tâche: ${subTask.title} (ID: ${subTask.id})');
-                                  if (widget.onToggleSubTask != null) {
-                                    widget.onToggleSubTask!(subTask.id);
+                                setState(() {
+                                  subTask.isCompleted = !subTask.isCompleted;
+                                });
+                              },
+                              activeColor: DSColor.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () {
+                                  debugPrint('🟢 [EditTodoModal] Clic sur sous-tâche: ${subTask.title} (ID: ${subTask.id})');
+                                  if (widget.onEditSubTask != null) {
+                                    widget.onEditSubTask!(subTask);
+                                  } else {
+                                    final homeState = context.findAncestorStateOfType<_TodoHomePageState>();
+                                    if (homeState != null) {
+                                      final subTasks = homeState._getVisibleSubTasks(subTask.id);
+                                      showModalBottomSheet(
+                                        context: context,
+                                        isScrollControlled: true,
+                                        builder: (context) => EditTodoModal(
+                                          todo: subTask,
+                                          projects: homeState._projects,
+                                          subTasks: subTasks,
+                                          onAddSubTask: (newSubTask) {
+                                            homeState.setState(() {
+                                              homeState._todos.add(newSubTask);
+                                            });
+                                          },
+                                          onToggleSubTask: (id) {
+                                            homeState.setState(() {
+                                              final index = homeState._todos.indexWhere((t) => t.id == id);
+                                              if (index != -1) {
+                                                homeState._todos[index].isCompleted = !homeState._todos[index].isCompleted;
+                                              }
+                                            });
+                                          },
+                                          onDeleteTodo: (id) {
+                                            homeState._deleteTodo(id);
+                                          },
+                                          onEditSubTask: (nestedSubTask) {
+                                            homeState._openEditModal(nestedSubTask);
+                                          },
+                                          homeState: homeState,
+                                        ),
+                                      );
+                                    }
                                   }
-                                  setState(() {
-                                    subTask.isCompleted = !subTask.isCompleted;
-                                  });
                                 },
-                              ),
-                              title: Text(
-                                subTask.title,
-                                style: TextStyle(
-                                  decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
-                                  color: subTask.isCompleted ? Colors.grey : null,
+                                child: Text(
+                                  subTask.title,
+                                  style: DSTypo.body.copyWith(
+                                    decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
+                                    color: subTask.isCompleted ? DSColor.muted : DSColor.body,
+                                  ),
                                 ),
                               ),
-                              subtitle: subTask.description.isNotEmpty
-                                  ? Text(
-                                      subTask.description,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: subTask.isCompleted ? Colors.grey : Theme.of(context).hintColor,
-                                      ),
-                                    )
-                                  : null,
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (subTask.dueDate != null)
-                                    Icon(Icons.calendar_today, size: 16, color: Theme.of(context).hintColor),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () {
-                                      debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title} (ID: ${subTask.id})');
-                                      
-                                      // Supprimer de la liste locale
-                                      setState(() {
-                                        _subTasks.removeAt(index);
-                                      });
-                                      
-                                      // Supprimer de la liste principale
-                                      final mainIndex = widget.homeState._todos.indexWhere((t) => t.id == subTask.id);
-                                      if (mainIndex != -1) {
-                                        widget.homeState._todos.removeAt(mainIndex);
-                                        debugPrint('🟢 [EditTodoModal] Sous-tâche supprimée de la liste principale');
-                                        
-                                        // Sauvegarder immédiatement
-                                        widget.homeState._saveData();
-                                        debugPrint('🟢 [EditTodoModal] Données sauvegardées après suppression');
-                                      } else {
-                                        debugPrint('❌ [EditTodoModal] Sous-tâche non trouvée dans la liste principale');
-                                      }
-                                    },
-                                    tooltip: 'Supprimer cette sous-tâche',
-                                  ),
-                                ],
-                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                  const SizedBox(height: 24),
-                ] else ...[
-                  const Text(
-                    'Niveau maximum de sous-tâches atteint.',
-                    style: TextStyle(color: Colors.red),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 18, color: Colors.red),
+                              onPressed: () {
+                                debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title} (ID: ${subTask.id})');
+                                setState(() {
+                                  _subTasks.removeAt(index);
+                                  final mainIndex = widget.homeState._todos.indexWhere((t) => t.id == subTask.id);
+                                  if (mainIndex != -1) {
+                                    widget.homeState._todos.removeAt(mainIndex);
+                                    widget.homeState._saveData();
+                                  }
+                                });
+                              },
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                  const SizedBox(height: 24),
                 ],
+                const SizedBox(height: 32),
+              ] else ...[
+                const Text(
+                  'Niveau maximum de sous-tâches atteint.',
+                  style: TextStyle(color: DSColor.danger),
+                ),
+                const SizedBox(height: 24),
+              ],
+              
               // Temps passé
               Row(
                 children: [
-                  const Icon(Icons.timelapse, size: 16),
-                  const SizedBox(width: 4),
-                  Text('Temps passé : ${_formatElapsedTime(widget.todo.elapsedSeconds)}', style: const TextStyle(fontSize: 14)),
+                  const Icon(Icons.timelapse, size: 18, color: DSColor.body),
+                  const SizedBox(width: 8),
+                  Text('Temps passé : ${_formatElapsedTime(widget.todo.elapsedSeconds)}', style: DSTypo.body),
                   IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
+                    icon: const Icon(Icons.refresh, size: 20, color: DSColor.muted),
                     tooltip: 'Réinitialiser le temps',
                     onPressed: () {
                       setState(() {
@@ -3719,104 +3813,79 @@ class _EditTodoModalState extends State<EditTodoModal> {
                           TimerService().pauseTimer();
                         }
                       });
-                      // Sauvegarder la tâche réinitialisée
                       widget.homeState._saveData();
                     },
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-                // Bouton "Marquer comme terminée"
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.check_circle),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.green,
-                    side: const BorderSide(color: Colors.green),
-                  ),
-                  onPressed: () {
-                    debugPrint('🔵 [EditTodoModal] Bouton "Marquer comme terminée" cliqué');
-                    debugPrint('🔵 [EditTodoModal] ID de la tâche: ${widget.todo.id}');
-                    debugPrint('🔵 [EditTodoModal] État actuel isCompleted: ${widget.todo.isCompleted}');
-                    
-                    debugPrint('🔵 [EditTodoModal] Début de la marque comme terminée');
-                    
-                    // Marquer la tâche et toutes ses sous-tâches comme terminées
-                    void markCompleted(int id) {
-                      debugPrint('🔵 [EditTodoModal] markCompleted appelé pour ID: $id');
-                      final index = widget.homeState._todos.indexWhere((t) => t.id == id);
-                      debugPrint('🔵 [EditTodoModal] Index trouvé: $index');
-                      
-                      if (index != -1) {
-                        debugPrint('🔵 [EditTodoModal] Ancien état isCompleted: ${widget.homeState._todos[index].isCompleted}');
-                        widget.homeState._todos[index].isCompleted = true;
-                        debugPrint('🔵 [EditTodoModal] Nouvel état isCompleted: ${widget.homeState._todos[index].isCompleted}');
-                      } else {
-                        debugPrint('❌ [EditTodoModal] Tâche non trouvée dans la liste');
-                      }
-                      
-                      final subTasks = widget.homeState._getVisibleSubTasks(id);
-                      debugPrint('🔵 [EditTodoModal] Sous-tâches trouvées: ${subTasks.length}');
-                      for (final sub in subTasks) {
-                        debugPrint('🔵 [EditTodoModal] Marquer sous-tâche: ${sub.id}');
-                        markCompleted(sub.id);
-                      }
-                    }
-                    
-                    markCompleted(widget.todo.id);
-                    debugPrint('🔵 [EditTodoModal] Sauvegarde des données...');
-                    widget.homeState._saveData();
-                    debugPrint('🔵 [EditTodoModal] Rafraîchissement de l\'interface...');
-                    widget.homeState.setState(() {}); // Rafraîchir l'interface
-                    debugPrint('🔵 [EditTodoModal] Affichage du SnackBar...');
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Tâche et sous-tâches marquées comme terminées')),
-                    );
-                    debugPrint('🔵 [EditTodoModal] Fermeture de la modale...');
-                    Navigator.pop(context); // Fermer la modale
-                    debugPrint('🔵 [EditTodoModal] Modale fermée');
-                  },
-                  label: const Text('Marquer comme terminée'),
-                ),
-                const SizedBox(height: 16),
-                // Bouton de suppression (tout en bas)
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    showDialog(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('Supprimer la tâche'),
-                        content: const Text('Êtes-vous sûr de vouloir supprimer cette tâche et toutes ses sous-tâches ?'),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Annuler'),
+              const SizedBox(height: 24),
+              
+              // Actions
+              Row(
+                children: [
+                  Expanded(
+                    child: DSButton.danger(
+                      label: 'Supprimer',
+                      onPressed: () async {
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Supprimer la tâche'),
+                            content: const Text('Êtes-vous sûr de vouloir supprimer cette tâche et toutes ses sous-tâches ?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Annuler'),
+                              ),
+                              TextButton(
+                                onPressed: () async {
+                                  widget.homeState._deleteTodo(widget.todo.id);
+                                  widget.homeState.setState(() {});
+                                  Navigator.pop(context);
+                                  Navigator.pop(context);
+                                },
+                                style: TextButton.styleFrom(foregroundColor: DSColor.danger),
+                                child: const Text('Supprimer'),
+                              ),
+                            ],
                           ),
-                          TextButton(
-                            onPressed: () async {
-                              // Utiliser directement widget.homeState au lieu de context.findAncestorStateOfType
-                              widget.homeState._deleteTodo(widget.todo.id);
-                              widget.homeState.setState(() {});
-                              Navigator.pop(context); // Fermer la boîte de dialogue
-                              Navigator.pop(context); // Fermer la modale d'édition
-                            },
-                            style: TextButton.styleFrom(foregroundColor: Colors.red),
-                            child: const Text('Supprimer'),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
+                        );
+                      },
+                    ),
                   ),
-                  icon: const Icon(Icons.delete),
-                  label: const Text('Supprimer cette tâche'),
-                ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: DSButton(
+                      label: 'Marquer comme terminée',
+                      onPressed: () {
+                        debugPrint('🔵 [EditTodoModal] Bouton "Marquer comme terminée" cliqué');
+                        void markCompleted(int id) {
+                          final index = widget.homeState._todos.indexWhere((t) => t.id == id);
+                          if (index != -1) {
+                            widget.homeState._todos[index].isCompleted = true;
+                          }
+                          final subTasks = widget.homeState._getVisibleSubTasks(id);
+                          for (final sub in subTasks) {
+                            markCompleted(sub.id);
+                          }
+                        }
+                        markCompleted(widget.todo.id);
+                        widget.homeState._saveData();
+                        widget.homeState.setState(() {});
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Tâche et sous-tâches marquées comme terminées')),
+                        );
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ),
+                ],
+              ),
               ],
-          ),
-        ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -4016,101 +4085,99 @@ class AddProjectDialog extends StatefulWidget {
 class _AddProjectDialogState extends State<AddProjectDialog> {
   final TextEditingController _nameController = TextEditingController();
   Color _selectedColor = Colors.blue;
-  bool _isNameValid = false;
-
+  
   final List<Color> _availableColors = [
-    Colors.blue,
-    Colors.green,
-    Colors.purple,
-    Colors.orange,
-    Colors.red,
-    Colors.pink,
-    Colors.indigo,
-    Colors.teal,
+    Colors.blue, Colors.green, Colors.purple, Colors.orange,
+    Colors.red, Colors.pink, Colors.indigo, Colors.teal,
   ];
 
   @override
-  void initState() {
-    super.initState();
-    _nameController.addListener(_onNameChanged);
-  }
-
-  void _onNameChanged() {
-    setState(() {
-      _isNameValid = _nameController.text.trim().isNotEmpty;
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Nouveau Projet'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _nameController,
-            decoration: const InputDecoration(
-              labelText: 'Nom du projet',
-              border: OutlineInputBorder(),
-            ),
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SingleChildScrollView(
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: const BoxDecoration(
+            color: DSColor.surfaceSoft,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          const SizedBox(height: 16),
-          const Text('Couleur du projet'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: _availableColors.map((color) {
-              return InkWell(
-                onTap: () {
-                  setState(() {
-                    _selectedColor = color;
-                  });
-                },
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _selectedColor == color ? Colors.black : Colors.transparent,
-                      width: 3,
-                    ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Nouveau Projet', style: DSTypo.h1Of(context)),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: DSColor.heading),
+                    onPressed: () => Navigator.pop(context),
                   ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Annuler'),
-        ),
-        ElevatedButton(
-          onPressed: _isNameValid
-              ? () {
-                  final newProject = Project(
-                    id: DateTime.now().millisecondsSinceEpoch,
-                    name: _nameController.text.trim(),
-                    color: _selectedColor,
-
+                ],
+              ),
+              const SizedBox(height: 24),
+              
+              DSTextField(
+                label: 'Nom du projet',
+                controller: _nameController,
+                hint: 'Ex: Personnel, Travail...',
+                onChanged: (val) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
+              
+              Text('Couleur', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: DSColor.heading)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: _availableColors.map((color) {
+                  final isSelected = _selectedColor == color;
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedColor = color),
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                        border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
+                        boxShadow: [
+                          if (isSelected)
+                            BoxShadow(
+                              color: color.withOpacity(0.4),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                        ],
+                      ),
+                      child: isSelected 
+                        ? const Icon(Icons.check, color: Colors.white, size: 24)
+                        : null,
+                    ),
                   );
-                  Navigator.pop(context, newProject);
-                }
-              : null,
-          child: const Text('Créer'),
+                }).toList(),
+              ),
+              const SizedBox(height: 32),
+              
+              DSButton(
+                label: 'Créer le projet',
+                onPressed: _nameController.text.trim().isNotEmpty
+                  ? () {
+                      final newProject = Project(
+                        id: DateTime.now().millisecondsSinceEpoch,
+                        name: _nameController.text.trim(),
+                        color: _selectedColor,
+                      );
+                      Navigator.pop(context, newProject);
+                    }
+                  : null,
+              ),
+            ],
+          ),
         ),
-      ],
+      ),
     );
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
   }
 }
 
@@ -4131,17 +4198,10 @@ class EditProjectDialog extends StatefulWidget {
 class _EditProjectDialogState extends State<EditProjectDialog> {
   late final TextEditingController _nameController;
   late Color _selectedColor;
-  bool _isNameValid = false;
-
+  
   final List<Color> _availableColors = [
-    Colors.blue,
-    Colors.green,
-    Colors.purple,
-    Colors.orange,
-    Colors.red,
-    Colors.pink,
-    Colors.indigo,
-    Colors.teal,
+    Colors.blue, Colors.green, Colors.purple, Colors.orange,
+    Colors.red, Colors.pink, Colors.indigo, Colors.teal,
   ];
 
   @override
@@ -4149,108 +4209,107 @@ class _EditProjectDialogState extends State<EditProjectDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.project.name);
     _selectedColor = widget.project.color;
-    _isNameValid = _nameController.text.trim().isNotEmpty;
-    _nameController.addListener(_onNameChanged);
-  }
-
-  void _onNameChanged() {
-    setState(() {
-      _isNameValid = _nameController.text.trim().isNotEmpty;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Modifier le Projet'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _nameController,
-            decoration: const InputDecoration(
-              labelText: 'Nom du projet',
-              border: OutlineInputBorder(),
-            ),
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SingleChildScrollView(
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: const BoxDecoration(
+            color: DSColor.surfaceSoft,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          const SizedBox(height: 16),
-          const Text('Couleur du projet'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: _availableColors.map((color) {
-              return InkWell(
-                onTap: () {
-                  setState(() {
-                    _selectedColor = color;
-                  });
-                },
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _selectedColor == color ? Colors.black : Colors.transparent,
-                      width: 3,
-                    ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Modifier le Projet', style: DSTypo.h1Of(context)),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: DSColor.heading),
+                    onPressed: () => Navigator.pop(context),
                   ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Annuler'),
-        ),
-        ElevatedButton(
-          onPressed: _isNameValid
-              ? () async {
-                  try {
-                    final localStorageService = LocalStorageService();
-                    final updatedProject = await localStorageService.updateProject(
-                      widget.project.id,
-                      {
-                        'name': _nameController.text.trim(),
-                        'color': _selectedColor,
-                      },
-                    );
-                    
-                    if (updatedProject != null) {
-                      widget.onProjectUpdated(updatedProject);
-                      Navigator.pop(context);
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Erreur lors de la modification du projet'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Erreur lors de la modification: $e'),
-                        backgroundColor: Colors.red,
+                ],
+              ),
+              const SizedBox(height: 24),
+              
+              DSTextField(
+                label: 'Nom du projet',
+                controller: _nameController,
+                onChanged: (val) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
+              
+              Text('Couleur', style: DSTypo.body.copyWith(fontWeight: FontWeight.w600, color: DSColor.heading)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: _availableColors.map((color) {
+                  final isSelected = _selectedColor == color;
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedColor = color),
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                        border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
+                        boxShadow: [
+                          if (isSelected)
+                            BoxShadow(
+                              color: color.withOpacity(0.4),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                        ],
                       ),
-                    );
-                  }
-                }
-              : null,
-          child: const Text('Modifier'),
+                      child: isSelected 
+                        ? const Icon(Icons.check, color: Colors.white, size: 24)
+                        : null,
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 32),
+              
+              DSButton(
+                label: 'Enregistrer',
+                onPressed: _nameController.text.trim().isNotEmpty
+                  ? () async {
+                      try {
+                        final localStorageService = LocalStorageService();
+                        final updatedProject = await localStorageService.updateProject(
+                          widget.project.id,
+                          {
+                            'name': _nameController.text.trim(),
+                            'color': _selectedColor,
+                          },
+                        );
+                        
+                        if (updatedProject != null) {
+                          widget.onProjectUpdated(updatedProject);
+                          Navigator.pop(context);
+                        }
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Erreur: $e')),
+                        );
+                      }
+                    }
+                  : null,
+              ),
+            ],
+          ),
         ),
-      ],
+      ),
     );
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
   }
 }
 
@@ -4460,11 +4519,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final brightness = Theme.of(context).brightness;
+    final surfaceSoftColor = DSColor.getSurfaceSoft(brightness);
+    final surfaceColor = DSColor.getSurface(brightness);
+    final headingColor = DSColor.getHeading(brightness);
+    final mutedColor = DSColor.getMuted(brightness);
+    
     return Container(
+      padding: EdgeInsets.only(
+        bottom: bottomPadding + 16, // Padding pour la barre de navigation Android
+      ),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: surfaceSoftColor,
         borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(24),
+          top: Radius.circular(20),
         ),
       ),
       child: SingleChildScrollView(
@@ -4477,62 +4546,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: mutedColor.withOpacity(0.3),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                'Paramètres',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onSurface,
-                  letterSpacing: -0.5,
-                ),
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Paramètres', style: DSTypo.h1Of(context)),
+                  IconButton(
+                    icon: Icon(Icons.close, color: headingColor),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
                   // Section Thème
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-                      ),
+                      color: surfaceColor,
+                      borderRadius: DSRadius.round,
+                      boxShadow: DSShadow.card,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.palette, color: Theme.of(context).colorScheme.primary),
+                            Icon(Icons.palette, color: DSColor.primary, size: 24),
                             const SizedBox(width: 12),
-                            Text(
-                              'Thème',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurface,
-                              ),
-                            ),
+                            Text('Thème', style: DSTypo.h2Of(context)),
                           ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
                         // Section Couleurs
                         Text(
                           'Couleur des éléments',
-                          style: TextStyle(
-                            fontSize: 16,
+                          style: DSTypo.body.copyWith(
                             fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.onSurface,
+                            color: headingColor,
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -4550,14 +4610,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _buildColorOptionSettings('Rouge', 'red', const Color(0xFFDC2626)),
                           ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
                         // Section Mode
                         Text(
                           'Mode d\'affichage',
-                          style: TextStyle(
-                            fontSize: 16,
+                          style: DSTypo.body.copyWith(
                             fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.onSurface,
+                            color: headingColor,
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -4579,47 +4638,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // Section Reconnaissance vocale
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-                      ),
+                      color: surfaceColor,
+                      borderRadius: DSRadius.round,
+                      boxShadow: DSShadow.card,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.mic, color: Theme.of(context).colorScheme.primary),
+                            Icon(Icons.mic, color: DSColor.primary, size: 24),
                             const SizedBox(width: 12),
-                            Text(
-                              'Reconnaissance vocale',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurface,
-                              ),
-                            ),
+                            Text('Reconnaissance vocale', style: DSTypo.h2Of(context)),
                           ],
                         ),
                         const SizedBox(height: 16),
                         Text(
                           'Configurez l\'ajout de tâches par la voix via OpenAI Whisper et GPT',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                          ),
+                          style: DSTypo.body.copyWith(color: mutedColor),
                         ),
                         const SizedBox(height: 16),
-                        TextField(
+                        DSTextField(
+                          label: 'Clés API OpenAI',
                           controller: _apiKeyController,
-                          decoration: const InputDecoration(
-                            labelText: 'Clés API OpenAI',
-                            hintText: 'clé1, clé2, ...',
-                            helperText: 'Entrez une ou plusieurs clés API OpenAI séparées par des virgules',
-                          ),
+                          hint: 'clé1, clé2, ...',
+                          helperText: 'Entrez une ou plusieurs clés API OpenAI séparées par des virgules',
                           onChanged: _saveOpenAiApiKeys,
                         ),
                       ],
@@ -4631,54 +4676,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // Section Affichage
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-                      ),
+                      color: surfaceColor,
+                      borderRadius: DSRadius.round,
+                      boxShadow: DSShadow.card,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.visibility, color: Theme.of(context).colorScheme.primary),
+                            Icon(Icons.visibility, color: DSColor.primary, size: 24),
                             const SizedBox(width: 12),
-                            Text(
-                              'Affichage',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurface,
-                              ),
-                            ),
+                            Text('Affichage', style: DSTypo.h2Of(context)),
                           ],
                         ),
-                        TextField(
-                          controller: _apiKeyController,
-                          decoration: const InputDecoration(
-                            labelText: 'Clés API OpenAI',
-                            hintText: 'clé1, clé2, ...',
+                        const SizedBox(height: 20),
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: surfaceSoftColor,
+                            borderRadius: DSRadius.soft,
                           ),
-                          onChanged: _saveOpenAiApiKeys,
-                        ),
-                        const SizedBox(height: 16),
-                        SwitchListTile(
-                          title: Text('Afficher les descriptions'),
-                          subtitle: Text('Afficher les descriptions des tâches dans la liste principale'),
-                          value: _showDescriptions,
-                          onChanged: _saveShowDescriptions,
-                          contentPadding: EdgeInsets.zero,
+                          child: SwitchListTile(
+                            title: Text('Afficher les descriptions', style: DSTypo.bodyOf(context)),
+                            subtitle: Text(
+                              'Afficher les descriptions des tâches dans la liste principale',
+                              style: DSTypo.caption.copyWith(color: mutedColor),
+                            ),
+                            value: _showDescriptions,
+                            onChanged: _saveShowDescriptions,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                            activeColor: DSColor.primary,
+                          ),
                         ),
                         const SizedBox(height: 8),
-                        SwitchListTile(
-                          title: Text('Afficher les tâches terminées'),
-                          subtitle: Text('Afficher les tâches terminées dans tous les projets'),
-                          value: _showCompletedTasksInProjects,
-                          onChanged: _saveShowCompletedTasks,
-                          contentPadding: EdgeInsets.zero,
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: surfaceSoftColor,
+                            borderRadius: DSRadius.soft,
+                          ),
+                          child: SwitchListTile(
+                            title: Text('Afficher les tâches terminées', style: DSTypo.bodyOf(context)),
+                            subtitle: Text(
+                              'Afficher les tâches terminées dans tous les projets',
+                              style: DSTypo.caption.copyWith(color: mutedColor),
+                            ),
+                            value: _showCompletedTasksInProjects,
+                            onChanged: _saveShowCompletedTasks,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                            activeColor: DSColor.primary,
+                          ),
                         ),
                       ],
                     ),
@@ -4687,44 +4737,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // Section Données
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-                      ),
+                      color: surfaceColor,
+                      borderRadius: DSRadius.round,
+                      boxShadow: DSShadow.card,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.storage, color: Theme.of(context).colorScheme.primary),
+                            Icon(Icons.storage, color: DSColor.primary, size: 24),
                             const SizedBox(width: 12),
-                            Text(
-                              'Données',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurface,
-                              ),
-                            ),
+                            Text('Données', style: DSTypo.h2Of(context)),
                           ],
                         ),
                         const SizedBox(height: 16),
                         Text(
                           'Sauvegardez ou restaurez toutes vos données (tâches, projets, préférences)',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                          ),
+                          style: DSTypo.body.copyWith(color: mutedColor),
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
                         Row(
                           children: [
                             Expanded(
-                              child: ElevatedButton.icon(
+                              child: DSButton(
+                                label: 'Sauvegarder',
+                                icon: Icons.download,
                                 onPressed: () async {
                                   try {
                                     // Afficher un indicateur de chargement
@@ -4776,18 +4816,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     );
                                   }
                                 },
-                                icon: const Icon(Icons.download),
-                                label: const Text('Sauvegarder'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Theme.of(context).colorScheme.primary,
-                                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                ),
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 16),
                             Expanded(
-                              child: ElevatedButton.icon(
+                              child: DSButton(
+                                label: 'Restaurer',
+                                icon: Icons.upload,
+                                backgroundColor: DSColor.getSurfaceTint(brightness),
+                                textColor: DSColor.primary,
                                 onPressed: () async {
                                   try {
                                     // Afficher un indicateur de chargement
@@ -4861,23 +4898,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     );
                                   }
                                 },
-                                icon: const Icon(Icons.upload),
-                                label: const Text('Restaurer'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Theme.of(context).colorScheme.secondary,
-                                  foregroundColor: Theme.of(context).colorScheme.onSecondary,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                ),
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () async {
+                        const SizedBox(height: 16),
+                        DSButton.danger(
+                          label: 'Supprimer toutes les données',
+                          icon: Icons.delete_forever,
+                          onPressed: () async {
                                   final confirmed = await showDialog<bool>(
                                     context: context,
                                     builder: (context) => AlertDialog(
@@ -4926,19 +4955,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     }
                                   }
                                 },
-                                icon: const Icon(Icons.delete_forever, color: Colors.red),
-                                label: const Text(
-                                  'Supprimer toutes les données',
-                                  style: TextStyle(color: Colors.red),
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(color: Colors.red, width: 2),
-                                  padding: const EdgeInsets.symmetric(vertical: 8),
-                                ),
                               ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),
@@ -4955,6 +4972,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildColorOptionSettings(String name, String colorName, Color color) {
     final isSelected = _selectedColor == colorName;
+    final brightness = Theme.of(context).brightness;
     
     return InkWell(
       onTap: () {
@@ -4963,16 +4981,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _selectedColor = colorName;
         });
       },
+      borderRadius: DSRadius.soft,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              color.withOpacity(0.1),
-              color.withOpacity(0.05),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(8),
+          color: isSelected ? color.withOpacity(0.15) : DSColor.getSurfaceSoft(brightness),
+          borderRadius: DSRadius.soft,
           border: Border.all(
             color: isSelected ? color : color.withOpacity(0.2),
             width: isSelected ? 2 : 1,
@@ -4982,34 +4996,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 12,
-              height: 12,
+              width: 16,
+              height: 16,
               decoration: BoxDecoration(
                 color: color,
                 shape: BoxShape.circle,
+                border: isSelected ? Border.all(color: DSColor.primary, width: 2) : null,
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
             Text(
               name,
-              style: TextStyle(
-                color: color,
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
-                letterSpacing: 0.3,
+              style: DSTypo.caption.copyWith(
+                color: isSelected ? DSColor.getHeading(brightness) : DSColor.getBody(brightness),
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
               ),
             ),
           ],
         ),
-      ).animate().scale(
-        duration: 150.ms,
-        curve: Curves.easeOutCubic,
       ),
     );
   }
 
   Widget _buildModeOptionSettings(String name, bool isDark, IconData icon) {
     final isSelected = _isDarkMode == isDark;
+    final brightness = Theme.of(context).brightness;
     
     return InkWell(
       onTap: () {
@@ -5018,24 +5029,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _isDarkMode = isDark;
         });
       },
+      borderRadius: DSRadius.soft,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              isSelected 
-                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-                : Colors.grey.withOpacity(0.1),
-              isSelected 
-                ? Theme.of(context).colorScheme.primary.withOpacity(0.05)
-                : Colors.grey.withOpacity(0.05),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(8),
+          color: isSelected ? DSColor.primary.withOpacity(0.15) : DSColor.getSurfaceSoft(brightness),
+          borderRadius: DSRadius.soft,
           border: Border.all(
-            color: isSelected 
-              ? Theme.of(context).colorScheme.primary
-              : Colors.grey.withOpacity(0.3),
+            color: isSelected ? DSColor.primary : DSColor.getMuted(brightness).withOpacity(0.3),
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -5043,27 +5044,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Icon(
               icon,
-              color: isSelected 
-                ? Theme.of(context).colorScheme.primary
-                : Colors.grey,
-              size: 20,
+              color: isSelected ? DSColor.primary : DSColor.getMuted(brightness),
+              size: 24,
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 6),
             Text(
               name,
-              style: TextStyle(
-                color: isSelected 
-                  ? Theme.of(context).colorScheme.primary
-                  : Colors.grey,
-                fontWeight: FontWeight.w600,
-                fontSize: 10,
+              style: DSTypo.caption.copyWith(
+                color: isSelected ? DSColor.getHeading(brightness) : DSColor.getBody(brightness),
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
               ),
             ),
           ],
         ),
-      ).animate().scale(
-        duration: 150.ms,
-        curve: Curves.easeOutCubic,
       ),
     );
   }
