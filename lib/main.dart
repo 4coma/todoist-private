@@ -12,6 +12,7 @@ import 'models/todo_item.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'services/test_data_generator_service.dart';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -532,20 +533,98 @@ class _TodoHomePageState extends State<TodoHomePage> {
     }
     final tempDir = await getTemporaryDirectory();
     final filePath = '${tempDir.path}/todo_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await recorder.start(RecordConfig(encoder: AudioEncoder.aacLc), path: filePath);
-    await showDialog(
+    await recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: filePath);
+
+    // Interface d'enregistrement améliorée
+    final shouldSave = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => GestureDetector(
-        onTap: () => Navigator.of(ctx).pop(),
-        child: const AlertDialog(
-          content: Text('Enregistrement en cours...\nTapez pour terminer'),
-        ),
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Builder(
+        builder: (context) {
+          final brightness = Theme.of(context).brightness;
+          final surfaceColor = DSColor.getSurface(brightness);
+          final headingColor = DSColor.getHeading(brightness);
+          final primaryColor = DSColor.primary;
+          
+          return Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: surfaceColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              boxShadow: DSShadow.card,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 16),
+                // Indicateur d'enregistrement (Microphone pulsant ou actif)
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: primaryColor.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.mic, size: 48, color: primaryColor),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Je vous écoute...',
+                  style: DSTypo.h2.copyWith(color: headingColor),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Parlez maintenant pour créer une tâche',
+                  style: DSTypo.body.copyWith(color: DSColor.getMuted(brightness)),
+                ),
+                const SizedBox(height: 32),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DSButton.secondary(
+                        label: 'Annuler',
+                        icon: Icons.close,
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: DSButton(
+                        label: 'Terminer',
+                        icon: Icons.check,
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          );
+        },
       ),
     );
+
     final path = await recorder.stop();
     await recorder.dispose();
-    return path;
+
+    if (shouldSave == true) {
+      return path;
+    } else {
+      // Si annulé, on essaie de supprimer le fichier temporaire
+      if (path != null) {
+        try {
+          final file = File(path);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (e) {
+          debugPrint('Erreur lors de la suppression du fichier vocal annulé: $e');
+        }
+      }
+      return null;
+    }
   }
 
   Future<String?> _transcribeAudio(String path, String apiKey) async {
@@ -568,12 +647,27 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   Future<Map<String, dynamic>?> _extractTodoFromText(
       String text, String apiKey) async {
+    final now = DateTime.now().toIso8601String();
     final prompt = '''
-Tu es un assistant qui transforme un texte en une tâche structurée.
-Réponds uniquement avec un objet JSON {"title": "...", "description": "..."}.
-Si l'utilisateur indique explicitement "titre" et "description", garde ces valeurs telles quelles.
-Sinon, reformule au besoin pour proposer un titre concis et une description détaillée.
-Texte: $text
+Tu es un assistant intelligent de gestion de tâches. Analyse le texte suivant pour extraire une tâche structurée.
+Texte: "$text"
+
+Règles d'extraction :
+1. "title": Le titre de la tâche. Utilise les mots exacts de l'utilisateur pour l'action principale. Ne reformule pas sauf si c'est incompréhensible.
+2. "description": Les détails supplémentaires si présents.
+3. "dueDate": La date d'échéance si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null.
+4. "reminder": La date/heure de rappel si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null. Déduis-le si l'utilisateur dit "rappel", "rappelle-moi", "alarme", etc.
+5. "project": Le nom du projet si mentionné (ex: "dans le projet Travail", "catégorie Maison"), sinon null.
+6. Si une date est relative (ex: "demain à 14h", "lundi prochain"), calcule la date absolue par rapport à la date actuelle : $now.
+
+Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
+{
+  "title": "...",
+  "description": "...",
+  "dueDate": "..." or null,
+  "reminder": "..." or null,
+  "project": "..." or null
+}
 ''';
 
     final response = await http.post(
@@ -627,19 +721,62 @@ Texte: $text
     final todoMap = await _extractTodoFromText(transcription, apiKey);
     if (todoMap == null) return;
 
+    DateTime? dueDate;
+    if (todoMap['dueDate'] != null) {
+      try {
+        dueDate = DateTime.parse(todoMap['dueDate']);
+      } catch (e) {
+        debugPrint('Erreur parsing dueDate: $e');
+      }
+    }
+
+    DateTime? reminder;
+    if (todoMap['reminder'] != null) {
+      try {
+        reminder = DateTime.parse(todoMap['reminder']);
+      } catch (e) {
+        debugPrint('Erreur parsing reminder: $e');
+      }
+    }
+
+    // Gestion du projet
+    int? projectId;
+    if (todoMap['project'] != null) {
+      final projectName = todoMap['project'].toString().toLowerCase();
+      try {
+        // Recherche exacte ou partielle
+        final project = _projects.firstWhere(
+          (p) => p.name.toLowerCase() == projectName || p.name.toLowerCase().contains(projectName),
+        );
+        projectId = project.id;
+      } catch (e) {
+        debugPrint('Projet vocal non trouvé: $projectName');
+        projectId = null; // Aucun projet par défaut si non trouvé
+      }
+    } else {
+      projectId = null; // Aucun projet par défaut si non précisé
+    }
+
     final newTodo = TodoItem(
       id: DateTime.now().millisecondsSinceEpoch,
       title: todoMap['title'] ?? 'Sans titre',
       description: todoMap['description'] ?? '',
       priority: Priority.medium,
-      projectId: _selectedProject?.id,
+      projectId: projectId,
       isCompleted: false,
+      dueDate: dueDate,
+      reminder: reminder,
     );
 
     setState(() {
       _todos.add(newTodo);
     });
     await _saveData();
+    
+    // Planifier la notification si un rappel est défini
+    if (newTodo.reminder != null) {
+      await NotificationService.scheduleNotification(newTodo);
+    }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2639,8 +2776,8 @@ class _AddTodoModalState extends State<AddTodoModal> {
   @override
   void initState() {
     super.initState();
-    // Utiliser le projet sélectionné par défaut, sinon le premier projet disponible
-    _selectedProject = widget.selectedProject ?? (widget.projects.isNotEmpty ? widget.projects.first : null);
+    // Utiliser le projet sélectionné par défaut, sinon "Aucun projet" (null)
+    _selectedProject = widget.selectedProject;
   }
 
   void _addSubTask() {
@@ -2651,7 +2788,7 @@ class _AddTodoModalState extends State<AddTodoModal> {
           title: _subTaskController.text.trim(),
           description: '',
           priority: Priority.medium,
-          projectId: _selectedProject!.id,
+          projectId: _selectedProject?.id,
           isCompleted: false,
           parentId: null, // Sera mis à jour quand la tâche parente sera créée
           level: 1, // Sous-tâche de niveau 1

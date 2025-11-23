@@ -215,4 +215,16 @@ class NotificationService {
     
     debugPrint('🔍 === FIN ÉTAT DES PERMISSIONS ===');
   }
+
+  /// Programme une notification pour une tâche spécifique
+  static Future<void> scheduleNotification(dynamic todo) async {
+    if (todo.reminder == null) return;
+
+    await scheduleTaskReminder(
+      taskId: todo.id,
+      title: 'Rappel : ${todo.title}',
+      body: todo.description.isNotEmpty ? todo.description : 'Il est temps de réaliser cette tâche',
+      scheduledDate: todo.reminder!,
+    );
+  }
 } 
