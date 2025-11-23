@@ -137,6 +137,7 @@ class DSTaskCard extends StatelessWidget {
   final String time;
   final Widget status;
   final bool isCompleted;
+  final VoidCallback? onToggleCompletion;
 
   const DSTaskCard({
     super.key,
@@ -147,6 +148,7 @@ class DSTaskCard extends StatelessWidget {
     required this.time,
     required this.status,
     this.isCompleted = false,
+    this.onToggleCompletion,
   });
 
   @override
@@ -180,16 +182,25 @@ class DSTaskCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: categoryColor.withOpacity(isCompleted ? 0.08 : 0.15),
-                borderRadius: DSRadius.round,
-              ),
-              child: Icon(
-                categoryIcon, 
-                color: isCompleted ? categoryColor.withOpacity(0.5) : categoryColor,
+            // Checkbox circulaire style Todoist
+            InkWell(
+              onTap: onToggleCompletion,
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                width: 28,
+                height: 28,
+                margin: const EdgeInsets.only(top: 2, right: 4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isCompleted ? categoryColor : Colors.transparent,
+                  border: Border.all(
+                    color: isCompleted ? categoryColor : categoryColor.withOpacity(0.5),
+                    width: 2,
+                  ),
+                ),
+                child: isCompleted
+                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    : null,
               ),
             ),
             const SizedBox(width: 12),

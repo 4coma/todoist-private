@@ -2515,14 +2515,11 @@ Texte: $text
                 color: DSColor.muted,
               ),
             const SizedBox(width: 4),
-            InkWell(
-              onTap: () => _toggleTodo(todo.id),
-              borderRadius: DSRadius.pill,
-              child: statusWidget,
-            ),
+            statusWidget,
           ],
         ),
         isCompleted: todo.isCompleted,
+        onToggleCompletion: () => _toggleTodo(todo.id),
       ),
     );
   }
