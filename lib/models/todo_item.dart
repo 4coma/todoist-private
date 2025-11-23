@@ -26,6 +26,7 @@ class TodoItem {
   final int? recurrenceDayOfWeek; // 1-7 pour les tâches hebdomadaires (1 = lundi)
   final int? recurrenceDayOfMonth; // 1-31 pour les tâches mensuelles
   final TimeOfDay? recurrenceTime; // Heure de récurrence
+  final bool isWeeklyPriority; // Indique si c'est une priorité de la semaine
 
   TodoItem({
     required this.id,
@@ -47,6 +48,7 @@ class TodoItem {
     this.recurrenceDayOfWeek,
     this.recurrenceDayOfMonth,
     this.recurrenceTime,
+    this.isWeeklyPriority = false,
   }) : 
     createdAt = createdAt ?? DateTime.now(),
     updatedAt = updatedAt ?? DateTime.now();
@@ -170,6 +172,7 @@ class TodoItem {
       recurrenceDayOfWeek: map['recurrenceDayOfWeek'],
       recurrenceDayOfMonth: map['recurrenceDayOfMonth'],
       recurrenceTime: parseTimeOfDay(map['recurrenceTime']),
+      isWeeklyPriority: map['isWeeklyPriority'] ?? false,
     );
   }
 
@@ -237,6 +240,7 @@ class TodoItem {
       recurrenceDayOfWeek: json['recurrenceDayOfWeek'] as int?,
       recurrenceDayOfMonth: json['recurrenceDayOfMonth'] as int?,
       recurrenceTime: parseTimeOfDay(json['recurrenceTime'] as String?),
+      isWeeklyPriority: json['isWeeklyPriority'] as bool? ?? false,
     );
   }
 
@@ -261,6 +265,7 @@ class TodoItem {
     int? recurrenceDayOfWeek,
     int? recurrenceDayOfMonth,
     TimeOfDay? recurrenceTime,
+    bool? isWeeklyPriority,
   }) {
     return TodoItem(
       id: id ?? this.id,
@@ -282,6 +287,7 @@ class TodoItem {
       recurrenceDayOfWeek: recurrenceDayOfWeek ?? this.recurrenceDayOfWeek,
       recurrenceDayOfMonth: recurrenceDayOfMonth ?? this.recurrenceDayOfMonth,
       recurrenceTime: recurrenceTime ?? this.recurrenceTime,
+      isWeeklyPriority: isWeeklyPriority ?? this.isWeeklyPriority,
     );
   }
 

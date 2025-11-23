@@ -229,6 +229,7 @@ class TodoHomePage extends StatefulWidget {
 }
 
 class _TodoHomePageState extends State<TodoHomePage> {
+  
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   List<Project> _projects = [];
   List<TodoItem> _todos = [];
@@ -450,6 +451,70 @@ class _TodoHomePageState extends State<TodoHomePage> {
     }
   }
 
+  Future<void> _handleTodoResult(dynamic result) async {
+    if (result != null && result['todo'] != null) {
+      final newTodo = result['todo'] as TodoItem;
+      final subTasks = result['subTasks'] as List<TodoItem>? ?? [];
+      
+      setState(() {
+        _todos.add(newTodo);
+        
+        // Ajouter les sous-tâches avec le bon parentId
+        for (final subTask in subTasks) {
+          final updatedSubTask = TodoItem(
+            id: subTask.id,
+            title: subTask.title,
+            description: subTask.description,
+            dueDate: subTask.dueDate,
+            priority: subTask.priority,
+            projectId: subTask.projectId,
+            isCompleted: subTask.isCompleted,
+            parentId: newTodo.id, // Lier à la tâche parente
+            level: subTask.level,
+            reminder: subTask.reminder,
+            estimatedMinutes: subTask.estimatedMinutes,
+            elapsedMinutes: subTask.elapsedMinutes,
+            elapsedSeconds: subTask.elapsedSeconds,
+          );
+          _todos.add(updatedSubTask);
+        }
+      });
+      
+      // Sauvegarder les données
+      await _saveData();
+      // Planifier la notification pour la tâche principale
+      if (newTodo.reminder != null) {
+        await NotificationService.scheduleTaskReminder(
+          taskId: newTodo.id,
+          title: newTodo.title,
+          body: newTodo.description.isNotEmpty ? newTodo.description : 'Rappel de tâche',
+          scheduledDate: newTodo.reminder!,
+        );
+      }
+      // Planifier les notifications pour les sous-tâches
+      for (final subTask in subTasks) {
+        if (subTask.reminder != null) {
+          await NotificationService.scheduleTaskReminder(
+            taskId: subTask.id,
+            title: subTask.title,
+            body: subTask.description.isNotEmpty ? subTask.description : 'Rappel de sous-tâche',
+            scheduledDate: subTask.reminder!,
+          );
+        }
+      }
+
+      // Afficher un toast de confirmation
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Tâche "${newTodo.title}" ajoutée'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   void _addTodo() {
     showModalBottomSheet(
       context: context,
@@ -467,69 +532,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
         selectedProject: _selectedProject, // Passer le projet sélectionné
         ),
       ),
-    ).then((result) async {
-      if (result != null && result['todo'] != null) {
-        final newTodo = result['todo'] as TodoItem;
-        final subTasks = result['subTasks'] as List<TodoItem>? ?? [];
-        
-        setState(() {
-          _todos.add(newTodo);
-          
-          // Ajouter les sous-tâches avec le bon parentId
-          for (final subTask in subTasks) {
-            final updatedSubTask = TodoItem(
-              id: subTask.id,
-              title: subTask.title,
-              description: subTask.description,
-              dueDate: subTask.dueDate,
-              priority: subTask.priority,
-              projectId: subTask.projectId,
-              isCompleted: subTask.isCompleted,
-              parentId: newTodo.id, // Lier à la tâche parente
-              level: subTask.level,
-              reminder: subTask.reminder,
-              estimatedMinutes: subTask.estimatedMinutes,
-              elapsedMinutes: subTask.elapsedMinutes,
-              elapsedSeconds: subTask.elapsedSeconds,
-            );
-            _todos.add(updatedSubTask);
-          }
-        });
-        
-        // Sauvegarder les données
-        await _saveData();
-        // Planifier la notification pour la tâche principale
-        if (newTodo.reminder != null) {
-          await NotificationService.scheduleTaskReminder(
-            taskId: newTodo.id,
-            title: newTodo.title,
-            body: newTodo.description.isNotEmpty ? newTodo.description : 'Rappel de tâche',
-            scheduledDate: newTodo.reminder!,
-          );
-        }
-        // Planifier les notifications pour les sous-tâches
-        for (final subTask in subTasks) {
-          if (subTask.reminder != null) {
-            await NotificationService.scheduleTaskReminder(
-              taskId: subTask.id,
-              title: subTask.title,
-              body: subTask.description.isNotEmpty ? subTask.description : 'Rappel de sous-tâche',
-              scheduledDate: subTask.reminder!,
-            );
-          }
-        }
-
-        // Afficher un toast de confirmation
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Tâche "${newTodo.title}" ajoutée'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      }
-    });
+    ).then(_handleTodoResult);
   }
 
   Future<String?> _recordAudio() async {
@@ -2625,21 +2628,31 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 
   Widget _buildCalendarView() {
     final today = DateTime.now();
-    // Générer les dates (30 jours avant et 30 jours après)
     final dates = List.generate(61, (index) => today.subtract(const Duration(days: 30)).add(Duration(days: index)));
     
-    // Filtrer les tâches pour la date sélectionnée
+    // 1. Priorités de la semaine
+    final weeklyPriorities = _todos.where((t) {
+      if (!t.isWeeklyPriority) return false;
+      if (t.isCompleted) return false;
+      
+      // Si pas de date, on garde (persistant)
+      if (t.dueDate == null && t.reminder == null) return true;
+      
+      // Si date, doit être dans la même semaine que la date sélectionnée
+      final date = t.dueDate ?? t.reminder!;
+      return _isSameWeek(date, _calendarSelectedDate);
+    }).toList();
+
+    // 2. Filtrer les tâches pour la date sélectionnée (Liste principale)
     final tasksForDate = _todos.where((t) {
-      if (t.isCompleted) return false; // On ne montre pas les tâches terminées dans le calendrier par défaut ? Ou filtre global ?
-      // Utilisons le filtre global _showCompletedTasks si on veut être cohérent, 
-      // mais généralement un calendrier montre ce qu'il y a à faire.
-      // Vérifions date d'échéance OU rappel
+      if (t.isWeeklyPriority) return false; // Exclure les priorités déjà affichées en haut
+      if (t.isCompleted) return false;
+      
       final hasDueDate = t.dueDate != null && _isSameDay(t.dueDate!, _calendarSelectedDate);
       final hasReminder = t.reminder != null && _isSameDay(t.reminder!, _calendarSelectedDate);
       return hasDueDate || hasReminder;
     }).toList();
 
-    // Trier par heure
     tasksForDate.sort((a, b) {
       final timeA = a.dueDate ?? a.reminder ?? DateTime(2100);
       final timeB = b.dueDate ?? b.reminder ?? DateTime(2100);
@@ -2647,8 +2660,82 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     });
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 8),
+        const SizedBox(height: 16),
+        // Section Priorités de la semaine
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Priorités de la semaine',
+                    style: DSTypo.h2Of(context).copyWith(fontSize: 14),
+                  ),
+                  InkWell(
+                    onTap: _openAddWeeklyPriorityModal,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4.0),
+                      child: Icon(Icons.add, size: 20, color: DSColor.primary),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (weeklyPriorities.isEmpty)
+                Text(
+                  'Aucune priorité définie',
+                  style: DSTypo.captionOf(context).copyWith(fontStyle: FontStyle.italic),
+                )
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: weeklyPriorities.map((t) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: DSColor.getSurfaceTint(Theme.of(context).brightness),
+                        borderRadius: DSRadius.soft,
+                        border: Border.all(color: DSColor.primary.withOpacity(0.2)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InkWell(
+                            onTap: () => _toggleTodo(t.id),
+                            child: Container(
+                              width: 18,
+                              height: 18,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(color: DSColor.primary, width: 2),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          InkWell(
+                            onTap: () => _editTodo(t),
+                            child: Text(
+                              t.title,
+                              style: DSTypo.bodyOf(context).copyWith(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 16),
         // Timeline horizontale
         SizedBox(
           height: 108,
@@ -2709,6 +2796,17 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
+  bool _isSameWeek(DateTime a, DateTime b) {
+    final aStart = a.subtract(Duration(days: a.weekday - 1));
+    final aEnd = aStart.add(const Duration(days: 6));
+    
+    final bStart = b.subtract(Duration(days: b.weekday - 1));
+    final bEnd = bStart.add(const Duration(days: 6));
+    
+    // Comparer simplement les dates de début de semaine (en ignorant l'heure)
+    return aStart.year == bStart.year && aStart.month == bStart.month && aStart.day == bStart.day;
+  }
+
   String _getMonthName(int month) {
     const months = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
     return months[month - 1];
@@ -2717,6 +2815,27 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
   String _getWeekDayName(int weekday) {
     const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
     return days[weekday - 1];
+  }
+
+  void _openAddWeeklyPriorityModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Theme(
+        data: Theme.of(context).copyWith(
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white,
+          ),
+        ),
+        child: AddTodoModal(
+          projects: _projects,
+          selectedProject: null, // Aucun projet par défaut
+          isWeeklyPriority: true,
+        ),
+      ),
+    ).then(_handleTodoResult);
   }
 
   Widget _buildDSTaskItem(TodoItem todo) {
@@ -2871,11 +2990,13 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 class AddTodoModal extends StatefulWidget {
   final List<Project> projects;
   final Project? selectedProject; // Projet sélectionné par défaut
+  final bool isWeeklyPriority;
   
   const AddTodoModal({
     super.key, 
     required this.projects,
     this.selectedProject, // Projet sélectionné par défaut
+    this.isWeeklyPriority = false,
   });
 
   @override
@@ -3313,6 +3434,7 @@ class _AddTodoModalState extends State<AddTodoModal> {
                                 estimatedMinutes: estimatedMinutes,
                                 elapsedMinutes: 0,
                                 elapsedSeconds: 0,
+                                isWeeklyPriority: widget.isWeeklyPriority,
                               );
                               Navigator.pop(context, {
                                 'todo': newTodo,
