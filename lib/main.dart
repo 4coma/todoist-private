@@ -209,6 +209,11 @@ enum SortType {
   priority,
 }
 
+enum ViewMode {
+  list,
+  calendar,
+}
+
 class TodoHomePage extends StatefulWidget {
   final Function(String, bool) onThemeChanged;
   final Function(ThemeData) onThemeChangedLegacy;
@@ -229,6 +234,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
   List<TodoItem> _todos = [];
   Project? _selectedProject;
   SortType _currentSort = SortType.dateAdded;
+  ViewMode _currentView = ViewMode.list;
+  DateTime _calendarSelectedDate = DateTime.now();
   bool _isSidebarOpen = false;
   bool _showDescriptions = false;
   bool _showCompletedTasks = false; // Mode "Tâches achevées" (sidebar)
@@ -2327,11 +2334,23 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                   _buildDrawerItem(
                     icon: Icons.list,
                     label: 'Toutes les tâches',
-                    isSelected: _selectedProject == null && !_showCompletedTasks,
+                    isSelected: _selectedProject == null && !_showCompletedTasks && _currentView == ViewMode.list,
                     onTap: () {
                       setState(() {
                         _selectedProject = null;
                         _showCompletedTasks = false;
+                        _currentView = ViewMode.list;
+                      });
+                      Navigator.pop(context);
+                    },
+                  ),
+                  _buildDrawerItem(
+                    icon: Icons.calendar_month,
+                    label: 'Calendrier',
+                    isSelected: _currentView == ViewMode.calendar,
+                    onTap: () {
+                      setState(() {
+                        _currentView = ViewMode.calendar;
                       });
                       Navigator.pop(context);
                     },
@@ -2549,30 +2568,9 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
           ),
           // --- TASK LIST ---
           Expanded(
-            child: _filteredTodos.isEmpty
-                ? Center(child: Builder(
-                    builder: (context) => Text('Aucune tâche', style: DSTypo.bodyOf(context)),
-                  ))
-                : ListView.builder(
-                    padding: const EdgeInsets.only(top: 4, bottom: 100),
-                    itemCount: _filteredTodos.length,
-                    itemBuilder: (context, index) {
-                      final todo = _filteredTodos[index];
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _buildDSTaskItem(todo),
-                          if (_expandedTasks.contains(todo.id))
-                            ..._getVisibleSubTasks(todo.id).map((subTask) => 
-                              Padding(
-                                padding: const EdgeInsets.only(left: 32),
-                                child: _buildDSTaskItem(subTask),
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
+            child: _currentView == ViewMode.calendar
+                ? _buildCalendarView()
+                : _buildListView(),
           ),
             ],
           ),
@@ -2595,6 +2593,130 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
     );
+  }
+
+  Widget _buildListView() {
+    if (_filteredTodos.isEmpty) {
+      return Center(child: Builder(
+        builder: (context) => Text('Aucune tâche', style: DSTypo.bodyOf(context)),
+      ));
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.only(top: 4, bottom: 100),
+      itemCount: _filteredTodos.length,
+      itemBuilder: (context, index) {
+        final todo = _filteredTodos[index];
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildDSTaskItem(todo),
+            if (_expandedTasks.contains(todo.id))
+              ..._getVisibleSubTasks(todo.id).map((subTask) => 
+                Padding(
+                  padding: const EdgeInsets.only(left: 32),
+                  child: _buildDSTaskItem(subTask),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCalendarView() {
+    final today = DateTime.now();
+    // Générer les dates (30 jours avant et 30 jours après)
+    final dates = List.generate(61, (index) => today.subtract(const Duration(days: 30)).add(Duration(days: index)));
+    
+    // Filtrer les tâches pour la date sélectionnée
+    final tasksForDate = _todos.where((t) {
+      if (t.isCompleted) return false; // On ne montre pas les tâches terminées dans le calendrier par défaut ? Ou filtre global ?
+      // Utilisons le filtre global _showCompletedTasks si on veut être cohérent, 
+      // mais généralement un calendrier montre ce qu'il y a à faire.
+      // Vérifions date d'échéance OU rappel
+      final hasDueDate = t.dueDate != null && _isSameDay(t.dueDate!, _calendarSelectedDate);
+      final hasReminder = t.reminder != null && _isSameDay(t.reminder!, _calendarSelectedDate);
+      return hasDueDate || hasReminder;
+    }).toList();
+
+    // Trier par heure
+    tasksForDate.sort((a, b) {
+      final timeA = a.dueDate ?? a.reminder ?? DateTime(2100);
+      final timeB = b.dueDate ?? b.reminder ?? DateTime(2100);
+      return timeA.compareTo(timeB);
+    });
+
+    return Column(
+      children: [
+        const SizedBox(height: 8),
+        // Timeline horizontale
+        SizedBox(
+          height: 108,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            // On essaie de centrer sur la date sélectionnée au démarrage (approximatif sans ScrollController complexe)
+            // Pour l'instant simple
+            controller: ScrollController(initialScrollOffset: 30 * 74.0), // 30 jours * largeur approx (64+10)
+            itemCount: dates.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final date = dates[index];
+              final isSelected = _isSameDay(date, _calendarSelectedDate);
+              return GestureDetector(
+                onTap: () => setState(() => _calendarSelectedDate = date),
+                child: DSDatePill(
+                  month: _getMonthName(date.month),
+                  day: date.day.toString(),
+                  week: _getWeekDayName(date.weekday),
+                  selected: isSelected,
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Liste des tâches pour le jour
+        Expanded(
+          child: tasksForDate.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.event_busy, size: 48, color: DSColor.muted.withOpacity(0.5)),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Aucune tâche prévue',
+                        style: DSTypo.bodyOf(context).copyWith(color: DSColor.muted),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.only(top: 4, bottom: 100),
+                  itemCount: tasksForDate.length,
+                  itemBuilder: (context, index) {
+                    final todo = tasksForDate[index];
+                    return _buildDSTaskItem(todo);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _getMonthName(int month) {
+    const months = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
+    return months[month - 1];
+  }
+
+  String _getWeekDayName(int weekday) {
+    const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+    return days[weekday - 1];
   }
 
   Widget _buildDSTaskItem(TodoItem todo) {
@@ -4866,6 +4988,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             onChanged: _saveShowCompletedTasks,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                             activeColor: DSColor.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        // Bouton Démo Design System
+                        SizedBox(
+                          width: double.infinity,
+                          child: DSButton.secondary(
+                            label: 'Voir la démo UI',
+                            icon: Icons.design_services,
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const DesignSystemDemoScreen()),
+                              );
+                            },
                           ),
                         ),
                       ],

@@ -109,38 +109,42 @@ class _DesignSystemDemoScreenState extends State<DesignSystemDemoScreen> {
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.only(top: 4, bottom: 100),
-                children: const [
+                children: [
                   DSTaskCard(
                     categoryIcon: Icons.shopping_bag_outlined,
-                    categoryColor: Color(0xFFFB6B9D),
+                    categoryColor: const Color(0xFFFB6B9D),
                     category: 'Grocery shopping app design',
                     title: 'Market Research',
                     time: '10:00 AM',
-                    status: DSStatusTag.done(),
+                    isCompleted: true,
+                    status: const DSStatusTag.done(),
                   ),
                   DSTaskCard(
                     categoryIcon: Icons.shopping_bag_outlined,
-                    categoryColor: Color(0xFFFB6B9D),
+                    categoryColor: const Color(0xFFFB6B9D),
                     category: 'Grocery shopping app design',
                     title: 'Competitive Analysis',
                     time: '12:00 PM',
-                    status: DSStatusTag.inProgress(),
+                    isCompleted: false,
+                    status: const DSStatusTag.inProgress(),
                   ),
                   DSTaskCard(
                     categoryIcon: Icons.lock_outline,
-                    categoryColor: Color(0xFF8B5CF6),
+                    categoryColor: const Color(0xFF8B5CF6),
                     category: 'Uber Eats redesign challange',
                     title: 'Create Low-fidelity Wireframe',
                     time: '07:00 PM',
-                    status: DSStatusTag.todo(),
+                    isCompleted: false,
+                    status: const DSStatusTag.todo(),
                   ),
                   DSTaskCard(
                     categoryIcon: Icons.menu_book_outlined,
-                    categoryColor: Color(0xFFF59E0B),
+                    categoryColor: const Color(0xFFF59E0B),
                     category: 'About design sprint',
                     title: 'How to pitch a Design Sprint',
                     time: '09:00 PM',
-                    status: DSStatusTag.todo(),
+                    isCompleted: false,
+                    status: const DSStatusTag.todo(),
                   ),
                 ],
               ),
@@ -192,7 +196,7 @@ class _BottomBar extends StatelessWidget {
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       child: BottomAppBar(
-        color: Colors.white.withOpacity(0.9),
+        color: DSColor.getSurface(Theme.of(context).brightness).withOpacity(0.9),
         shape: const CircularNotchedRectangle(),
         notchMargin: 8,
         child: SizedBox(
@@ -218,10 +222,11 @@ class _BarIcon extends StatelessWidget {
   const _BarIcon(this.icon);
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: DSColor.pillBg,
+        color: DSColor.getSurfaceTint(brightness),
         borderRadius: DSRadius.round,
       ),
       child: Icon(icon, color: DSColor.primary),
