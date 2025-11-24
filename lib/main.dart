@@ -863,8 +863,12 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
         // Sauvegarder les données
         await _saveData();
         final updatedTodo = result['todo'] as TodoItem;
+        
+        // Annuler l'ancienne notification avant d'en programmer une nouvelle
+        await NotificationService.cancelTaskNotification(updatedTodo.id);
+        
         // Planifier la nouvelle notification si besoin
-        if (updatedTodo.reminder != null) {
+        if (updatedTodo.reminder != null && updatedTodo.reminder!.isAfter(DateTime.now())) {
           await NotificationService.scheduleTaskReminder(
             taskId: updatedTodo.id,
             title: updatedTodo.title,
@@ -2579,19 +2583,22 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
           ),
         ),
       ),
-      floatingActionButton: Container(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [DSColor.primary, DSColor.accent],
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 24.0),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [DSColor.primary, DSColor.accent],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: DSShadow.floating(DSColor.primary),
           ),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: DSShadow.floating(DSColor.primary),
-        ),
-        child: FloatingActionButton(
-          onPressed: _addTodo,
-          elevation: 0,
-          backgroundColor: Colors.transparent,
-          child: const Icon(Icons.add, color: Colors.white),
+          child: FloatingActionButton(
+            onPressed: _addTodo,
+            elevation: 0,
+            backgroundColor: Colors.transparent,
+            child: const Icon(Icons.add, color: Colors.white),
+          ),
         ),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
@@ -4273,7 +4280,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
   }
 
   // Méthode pour sauvegarder automatiquement les modifications
-  void _saveChanges() {
+  Future<void> _saveChanges() async {
     if (_titleController.text.trim().isEmpty) {
       debugPrint('❌ _saveChanges(): Titre vide, sauvegarde annulée');
       return; // Ne pas sauvegarder si le titre est vide
@@ -4382,6 +4389,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
         // Forcer le rafraîchissement de la sidebar
         widget.homeState._refreshSidebarCounts();
         
+        // Annuler l'ancienne notification avant d'en programmer une nouvelle
+        await NotificationService.cancelTaskNotification(updatedTodo.id);
+        
         // Reprogrammer la notification si nécessaire
         if (updatedTodo.reminder != null && updatedTodo.reminder!.isAfter(DateTime.now())) {
           NotificationService.scheduleTaskReminder(
@@ -4415,6 +4425,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
         
         // Reprogrammer les notifications pour les sous-tâches
         for (final subTask in _subTasks) {
+          // Annuler l'ancienne notification avant d'en programmer une nouvelle
+          await NotificationService.cancelTaskNotification(subTask.id);
+          
           if (subTask.reminder != null && subTask.reminder!.isAfter(DateTime.now())) {
             NotificationService.scheduleTaskReminder(
               taskId: subTask.id,

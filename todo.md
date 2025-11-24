@@ -13,7 +13,7 @@
 ~~quand on tape sur le micro pour ajouter une tâche oralement, il faut améliorer l'interface du micro qui signale qu'un enregistmeent est en cours, et il faut pouvoir annuler l'enregistment très facilement de manière cohérente avec le nouveuau design system bien évidemment~~
 ~~add task vocally avec extraction de la tâche elle même et de sa description, rappel, échéance...~~
 ~~ajouter la possibilité de voir et définir les priorités de la semaine~~
-
+- permettre le fait qu'il y a un switch auto entr ele dark et le light theme le soir et le jour
+- créer une réelle icone android, comme avec nuova
 - supabase
-- web version
 - site web de présentation et intégration à mon portfolio (également ajouter selfman ?)

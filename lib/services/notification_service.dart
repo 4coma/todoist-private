@@ -132,6 +132,21 @@ class NotificationService {
     required String body,
     required DateTime scheduledDate,
   }) async {
+    // Vérifier que la date est dans le futur
+    if (scheduledDate.isBefore(DateTime.now())) {
+      debugPrint('⚠️ scheduleTaskReminder(): Date dans le passé, notification non programmée pour tâche $taskId');
+      return;
+    }
+    
+    // Vérifier les permissions
+    final isAllowed = await AwesomeNotifications().isNotificationAllowed();
+    if (!isAllowed) {
+      debugPrint('⚠️ scheduleTaskReminder(): Permissions non accordées, notification non programmée pour tâche $taskId');
+      // Essayer de redemander les permissions
+      await requestPermission();
+      return;
+    }
+    
     // Générer un ID valide pour la notification basé sur l'ID de la tâche
     final int notificationId = _generateNotificationId(taskId);
     
@@ -219,6 +234,12 @@ class NotificationService {
   /// Programme une notification pour une tâche spécifique
   static Future<void> scheduleNotification(dynamic todo) async {
     if (todo.reminder == null) return;
+    
+    // Ne pas programmer si la date est dans le passé
+    if (todo.reminder!.isBefore(DateTime.now())) {
+      debugPrint('⚠️ scheduleNotification(): Rappel dans le passé, notification non programmée');
+      return;
+    }
 
     await scheduleTaskReminder(
       taskId: todo.id,
