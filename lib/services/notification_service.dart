@@ -69,6 +69,7 @@ class NotificationService {
           notificationLayout: NotificationLayout.Default,
           category: NotificationCategory.Reminder,
           payload: payload, // Inclure les données de navigation
+          groupKey: 'todo_reminder_$id', // GroupKey unique par notification pour éviter le groupement automatique
         ),
         schedule: NotificationCalendar.fromDate(
           date: scheduledDate,
@@ -180,6 +181,7 @@ class NotificationService {
           title: 'Test Notification',
           body: 'Ceci est une notification de test',
           notificationLayout: NotificationLayout.Default,
+          groupKey: 'todo_test_999', // GroupKey unique pour éviter le groupement
         ),
       );
       

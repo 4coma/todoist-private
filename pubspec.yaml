@@ -75,6 +75,9 @@ dependencies:
   # Enregistrement audio et requêtes HTTP
   record: ^6.0.0
   http: ^1.2.0
+  
+  # Localisation pour les date pickers
+  intl: ^0.20.0
 
 dev_dependencies:
   flutter_test:

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/intl.dart';
 import 'themes.dart';
 import 'services/notification_service.dart';
 import 'services/local_storage_service.dart';
@@ -194,6 +196,16 @@ class _TodoAppState extends State<TodoApp> {
       darkTheme: darkTheme,
       themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
       debugShowCheckedModeBanner: false, // Enlève le banner DEBUG
+      locale: const Locale('fr', 'BE'), // Locale belge (lundi comme premier jour)
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('fr', 'BE'), // Français belge
+        Locale('fr'), // Français par défaut
+      ],
       home: TodoHomePage(
         onThemeChanged: _changeTheme,
         onThemeChangedLegacy: _changeThemeLegacy,
