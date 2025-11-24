@@ -135,6 +135,7 @@ class DSTaskCard extends StatelessWidget {
   final String category;
   final String title;
   final String time;
+  final DateTime? reminder;
   final Widget status;
   final bool isCompleted;
   final VoidCallback? onToggleCompletion;
@@ -146,6 +147,7 @@ class DSTaskCard extends StatelessWidget {
     required this.category,
     required this.title,
     required this.time,
+    this.reminder,
     required this.status,
     this.isCompleted = false,
     this.onToggleCompletion,
@@ -222,23 +224,43 @@ class DSTaskCard extends StatelessWidget {
                       color: isCompleted ? mutedColor : headingColor,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.schedule, 
-                        size: 16, 
-                        color: isCompleted ? mutedColor.withOpacity(0.6) : mutedColor,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        time, 
-                        style: DSTypo.body.copyWith(
-                          color: isCompleted ? mutedColor.withOpacity(0.6) : mutedColor,
-                        ),
-                      ),
-                    ],
-                  ),
+                  if (time.isNotEmpty || reminder != null) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        if (time.isNotEmpty) ...[
+                          Icon(
+                            Icons.schedule, 
+                            size: 16, 
+                            color: isCompleted ? mutedColor.withOpacity(0.6) : mutedColor,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            time, 
+                            style: DSTypo.body.copyWith(
+                              color: isCompleted ? mutedColor.withOpacity(0.6) : mutedColor,
+                            ),
+                          ),
+                        ],
+                        if (time.isNotEmpty && reminder != null)
+                          const SizedBox(width: 12),
+                        if (reminder != null) ...[
+                          Icon(
+                            Icons.alarm, 
+                            size: 16, 
+                            color: isCompleted ? mutedColor.withOpacity(0.6) : DSColor.accent,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${reminder!.day}/${reminder!.month}/${reminder!.year} ${reminder!.hour.toString().padLeft(2, '0')}:${reminder!.minute.toString().padLeft(2, '0')}',
+                            style: DSTypo.body.copyWith(
+                              color: isCompleted ? mutedColor.withOpacity(0.6) : mutedColor,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

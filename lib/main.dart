@@ -197,7 +197,7 @@ class _TodoAppState extends State<TodoApp> {
       themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
       debugShowCheckedModeBanner: false, // Enlève le banner DEBUG
       locale: const Locale('fr', 'BE'), // Locale belge (lundi comme premier jour)
-      localizationsDelegates: const [
+      localizationsDelegates: [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
@@ -253,6 +253,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
   bool _showDescriptions = false;
   bool _showCompletedTasks = false; // Mode "Tâches achevées" (sidebar)
   bool _showCompletedTasksInProjects = false; // Option "Afficher les tâches terminées" (paramètres)
+  bool _isSearchActive = false; // État de la recherche
+  String _searchQuery = ''; // Terme de recherche
 
   String _openAiApiKeys = '';
   
@@ -569,18 +571,21 @@ class _TodoHomePageState extends State<TodoHomePage> {
           final surfaceColor = DSColor.getSurface(brightness);
           final headingColor = DSColor.getHeading(brightness);
           final primaryColor = DSColor.primary;
+          final bottomPadding = MediaQuery.of(context).padding.bottom;
           
-          return Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: surfaceColor,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              boxShadow: DSShadow.card,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 16),
+          return Padding(
+            padding: EdgeInsets.only(bottom: bottomPadding + 16), // Remonter la modale
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: surfaceColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                boxShadow: DSShadow.card,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 16),
                 // Indicateur d'enregistrement (Microphone pulsant ou actif)
                 Container(
                   padding: const EdgeInsets.all(24),
@@ -622,6 +627,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
                 ),
                 const SizedBox(height: 16),
               ],
+            ),
             ),
           );
         },
@@ -669,18 +675,55 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   Future<Map<String, dynamic>?> _extractTodoFromText(
       String text, String apiKey) async {
-    final now = DateTime.now().toIso8601String();
+    final now = DateTime.now();
+    final nowIso = now.toIso8601String();
+    
+    // Formater la date actuelle de manière lisible en français
+    final dayNames = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+    final monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 
+                        'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+    // DateTime.weekday: 1=lundi, 2=mardi, ..., 7=dimanche
+    // Pour notre tableau [dim, lun, mar, mer, jeu, ven, sam] (index 0-6)
+    // weekday 1 (lundi) -> index 1, weekday 7 (dimanche) -> index 0
+    final dayIndex = now.weekday == 7 ? 0 : now.weekday;
+    final currentDayName = dayNames[dayIndex];
+    final currentMonthName = monthNames[now.month - 1];
+    final currentDateFormatted = '$currentDayName ${now.day} $currentMonthName ${now.year}';
+    
     final prompt = '''
 Tu es un assistant intelligent de gestion de tâches. Analyse le texte suivant pour extraire une tâche structurée.
 Texte: "$text"
+
+INFORMATIONS ACTUELLES :
+- Date et jour actuels : $currentDateFormatted
+- Date ISO actuelle (pour calculs) : $nowIso
+- Jour de la semaine actuel : $currentDayName
 
 Règles d'extraction :
 1. "title": Le titre de la tâche. Utilise les mots exacts de l'utilisateur pour l'action principale. Ne reformule pas sauf si c'est incompréhensible.
 2. "description": Les détails supplémentaires si présents.
 3. "dueDate": La date d'échéance si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null.
-4. "reminder": La date/heure de rappel si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null. Déduis-le si l'utilisateur dit "rappel", "rappelle-moi", "alarme", etc.
-5. "project": Le nom du projet si mentionné (ex: "dans le projet Travail", "catégorie Maison"), sinon null.
-6. Si une date est relative (ex: "demain à 14h", "lundi prochain"), calcule la date absolue par rapport à la date actuelle : $now.
+4. "reminder": La date/heure de rappel si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null. 
+   IMPORTANT pour les rappels :
+   - Si l'utilisateur dit "rappel", "rappelle-moi", "alarme", "notifie-moi", "souviens-toi", etc., tu DOIS extraire le rappel
+   - Si une heure est mentionnée (ex: "à 9h", "à 14h30", "à 8 heures du matin"), c'est un rappel
+   - Si une date et heure sont mentionnées pour un rappel (ex: "rappel le 15 octobre à 9h"), calcule la date complète
+   - Si seulement une heure est mentionnée sans date (ex: "rappel à 9h"), utilise la date d'aujourd'hui avec cette heure (sauf si l'heure est passée, alors utilise demain)
+   - Si une date relative est mentionnée pour un rappel (ex: "rappel demain à 14h"), calcule la date absolue
+   - Le format doit être ISO 8601 complet : YYYY-MM-DDTHH:MM:SS (ex: "2024-03-22T09:00:00")
+5. "project": Le nom du projet UNIQUEMENT si explicitement mentionné par l'utilisateur (ex: "dans le projet Travail", "catégorie Maison"). Si aucun projet n'est mentionné, tu DOIS retourner null. Ne devine pas ou n'invente pas de projet.
+6. Si une date est relative (ex: "demain", "lundi", "jeudi prochain", "dans 3 jours"), calcule la date absolue en te basant sur la date actuelle ($currentDateFormatted). 
+   - "demain" = jour suivant
+   - "après-demain" = dans 2 jours
+   - "lundi", "mardi", etc. = prochain jour de la semaine mentionné (si c'est déjà passé cette semaine, prends celui de la semaine prochaine)
+   - "lundi prochain" = lundi de la semaine prochaine
+   - "dans X jours" = date actuelle + X jours
+
+EXEMPLES de rappels :
+- "rappel à 9h" → reminder: "2024-03-22T09:00:00" (aujourd'hui à 9h, ou demain si l'heure est passée)
+- "rappel demain à 14h30" → reminder: "2024-03-23T14:30:00"
+- "rappel le 15 octobre à 9h" → reminder: "2024-10-15T09:00:00"
+- "rappel jeudi à 8h" → reminder: date du prochain jeudi à 8h
 
 Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 {
@@ -715,6 +758,74 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     return null;
   }
 
+  void _showVoiceProcessingOverlay(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withOpacity(0.1), // Plus transparent
+      builder: (context) => Builder(
+        builder: (context) {
+          final brightness = Theme.of(context).brightness;
+          final surfaceColor = DSColor.getSurface(brightness).withOpacity(0.85); // Plus transparent
+          final headingColor = DSColor.getHeading(brightness);
+          final mutedColor = DSColor.getMuted(brightness);
+          
+          return PopScope(
+            canPop: false,
+            child: Center(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 40),
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: surfaceColor,
+                  borderRadius: DSRadius.round,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          DSColor.primary.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      message,
+                      style: TextStyle(
+                        color: headingColor.withOpacity(0.9),
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                        decoration: TextDecoration.none, // Enlever tout surlignement
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _updateVoiceProcessingOverlay(String message) {
+    Navigator.of(context).pop(); // Fermer l'ancien overlay
+    _showVoiceProcessingOverlay(message); // Afficher le nouveau
+  }
+
   Future<void> _addTodoByVoice() async {
     if (_openAiApiKeys.trim().isEmpty) {
       showDialog(
@@ -737,11 +848,75 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     if (path == null) return;
 
     final apiKey = _openAiApiKeys.split(',').first.trim();
-    final transcription = await _transcribeAudio(path, apiKey);
-    if (transcription == null) return;
+    
+    // Afficher le loader avec le premier message
+    _showVoiceProcessingOverlay('Transcription de l\'audio...');
+    
+    String? transcription;
+    try {
+      transcription = await _transcribeAudio(path, apiKey);
+      if (transcription == null) {
+        if (mounted) {
+          Navigator.of(context).pop(); // Fermer le loader
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Erreur lors de la transcription'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Fermer le loader
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur lors de la transcription: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
 
-    final todoMap = await _extractTodoFromText(transcription, apiKey);
-    if (todoMap == null) return;
+    // Mettre à jour le message
+    if (mounted) {
+      _updateVoiceProcessingOverlay('Analyse de la tâche...');
+    }
+
+    Map<String, dynamic>? todoMap;
+    try {
+      todoMap = await _extractTodoFromText(transcription, apiKey);
+      if (todoMap == null) {
+        if (mounted) {
+          Navigator.of(context).pop(); // Fermer le loader
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Erreur lors de l\'extraction de la tâche'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Fermer le loader
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur lors de l\'extraction: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Mettre à jour le message
+    if (mounted) {
+      _updateVoiceProcessingOverlay('Création de la tâche...');
+    }
 
     DateTime? dueDate;
     if (todoMap['dueDate'] != null) {
@@ -753,29 +928,52 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     }
 
     DateTime? reminder;
-    if (todoMap['reminder'] != null) {
+    if (todoMap['reminder'] != null && todoMap['reminder'].toString().trim().isNotEmpty) {
       try {
-        reminder = DateTime.parse(todoMap['reminder']);
+        final reminderStr = todoMap['reminder'].toString().trim();
+        debugPrint('🔔 [VOIX] Rappel extrait du modèle: "$reminderStr"');
+        reminder = DateTime.parse(reminderStr);
+        debugPrint('✅ [VOIX] Rappel parsé avec succès: ${reminder.toString()}');
+        
+        // Vérifier que le rappel est dans le futur
+        if (reminder.isBefore(DateTime.now())) {
+          debugPrint('⚠️ [VOIX] Rappel dans le passé, ajustement à demain à la même heure');
+          reminder = DateTime(
+            reminder.year,
+            reminder.month,
+            reminder.day + 1,
+            reminder.hour,
+            reminder.minute,
+          );
+        }
       } catch (e) {
-        debugPrint('Erreur parsing reminder: $e');
+        debugPrint('❌ [VOIX] Erreur parsing reminder: $e');
+        debugPrint('❌ [VOIX] Valeur reçue: ${todoMap['reminder']}');
+        reminder = null;
       }
+    } else {
+      debugPrint('ℹ️ [VOIX] Aucun rappel mentionné, reminder = null');
     }
 
     // Gestion du projet
     int? projectId;
-    if (todoMap['project'] != null) {
-      final projectName = todoMap['project'].toString().toLowerCase();
+    if (todoMap['project'] != null && todoMap['project'].toString().trim().isNotEmpty) {
+      final projectName = todoMap['project'].toString().toLowerCase().trim();
+      debugPrint('🔍 [VOIX] Projet mentionné: "$projectName"');
       try {
-        // Recherche exacte ou partielle
+        // Recherche exacte d'abord, puis partielle
         final project = _projects.firstWhere(
-          (p) => p.name.toLowerCase() == projectName || p.name.toLowerCase().contains(projectName),
+          (p) => p.name.toLowerCase().trim() == projectName || 
+                 (projectName.length > 2 && p.name.toLowerCase().trim().contains(projectName)),
         );
         projectId = project.id;
+        debugPrint('✅ [VOIX] Projet trouvé: "${project.name}" (ID: ${project.id})');
       } catch (e) {
-        debugPrint('Projet vocal non trouvé: $projectName');
+        debugPrint('❌ [VOIX] Projet vocal non trouvé: "$projectName"');
         projectId = null; // Aucun projet par défaut si non trouvé
       }
     } else {
+      debugPrint('ℹ️ [VOIX] Aucun projet mentionné, projectId = null');
       projectId = null; // Aucun projet par défaut si non précisé
     }
 
@@ -797,14 +995,33 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     
     // Planifier la notification si un rappel est défini
     if (newTodo.reminder != null) {
-      await NotificationService.scheduleNotification(newTodo);
+      debugPrint('🔔 [VOIX] Programmation de la notification pour le rappel: ${newTodo.reminder}');
+      try {
+        await NotificationService.scheduleNotification(newTodo);
+        debugPrint('✅ [VOIX] Notification programmée avec succès');
+      } catch (e) {
+        debugPrint('❌ [VOIX] Erreur lors de la programmation de la notification: $e');
+      }
+    } else {
+      debugPrint('ℹ️ [VOIX] Aucune notification à programmer (pas de rappel)');
     }
 
+    // Fermer le loader et afficher la confirmation
     if (mounted) {
+      Navigator.of(context).pop(); // Fermer le loader
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Tâche "${newTodo.title}" ajoutée'),
-          duration: const Duration(seconds: 2),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('Tâche "${newTodo.title}" ajoutée avec succès'),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
         ),
       );
     }
@@ -1080,36 +1297,54 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
   void _showSortDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Trier les tâches'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildSortOption(SortType.dueDate, 'Date d\'échéance', Icons.schedule),
-            _buildSortOption(SortType.name, 'Nom', Icons.sort_by_alpha),
-            _buildSortOption(SortType.dateAdded, 'Date d\'ajout', Icons.add_circle),
-            _buildSortOption(SortType.priority, 'Priorité', Icons.priority_high),
-          ],
-        ),
+      builder: (ctx) => Builder(
+        builder: (context) {
+          final brightness = Theme.of(context).brightness;
+          final surfaceColor = DSColor.getSurface(brightness);
+          final headingColor = DSColor.getHeading(brightness);
+          final bodyColor = DSColor.getBody(brightness);
+          
+          return AlertDialog(
+            backgroundColor: surfaceColor,
+            title: Text(
+              'Trier les tâches',
+              style: DSTypo.h2.copyWith(color: headingColor),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildSortOption(ctx, SortType.dueDate, 'Date d\'échéance', Icons.schedule),
+                _buildSortOption(ctx, SortType.name, 'Nom', Icons.sort_by_alpha),
+                _buildSortOption(ctx, SortType.dateAdded, 'Date d\'ajout', Icons.add_circle),
+                _buildSortOption(ctx, SortType.priority, 'Priorité', Icons.priority_high),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildSortOption(SortType sortType, String title, IconData icon) {
+  Widget _buildSortOption(BuildContext context, SortType sortType, String title, IconData icon) {
     final isSelected = _currentSort == sortType;
+    final brightness = Theme.of(context).brightness;
+    final headingColor = DSColor.getHeading(brightness);
+    final bodyColor = DSColor.getBody(brightness);
+    final primaryColor = DSColor.primary;
+    
     return ListTile(
       leading: Icon(
         icon,
-        color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+        color: isSelected ? primaryColor : DSColor.getMuted(brightness),
       ),
       title: Text(
         title,
         style: TextStyle(
           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          color: isSelected ? Theme.of(context).primaryColor : null,
+          color: isSelected ? primaryColor : bodyColor, // Couleur adaptative au thème
         ),
       ),
-      trailing: isSelected ? const Icon(Icons.check, color: Colors.green) : null,
+      trailing: isSelected ? Icon(Icons.check, color: Colors.green) : null,
       onTap: () {
         setState(() {
           _currentSort = sortType;
@@ -2094,6 +2329,20 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     }
   }
 
+  /// Compte uniquement les tâches actives (non terminées) selon le contexte actuel
+  int _getActiveTasksCount() {
+    if (_showCompletedTasks) {
+      // Mode "Tâches achevées" - retourner 0 car on ne compte que les actives
+      return 0;
+    } else if (_selectedProject == null) {
+      // Vue "Toutes les tâches" - compter uniquement les tâches actives (non terminées)
+      return _todos.where((todo) => !todo.isCompleted && todo.isRootTask).length;
+    } else {
+      // Vue projet spécifique - compter uniquement les tâches actives du projet
+      return _todos.where((todo) => !todo.isCompleted && todo.projectId == _selectedProject!.id && todo.isRootTask).length;
+    }
+  }
+
   List<TodoItem> get _filteredTodos {
     List<TodoItem> filtered;
     
@@ -2115,10 +2364,14 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
       debugPrint('🔍 [FILTRAGE] Vue projet ${_selectedProject!.name}: ${filtered.length} tâches (showCompletedTasksInProjects: $_showCompletedTasksInProjects)');
     }
     
-    // Appliquer le tri
+    // Séparer les tâches terminées et non terminées AVANT le tri
+    final completedTasks = filtered.where((t) => t.isCompleted).toList();
+    final activeTasks = filtered.where((t) => !t.isCompleted).toList();
+    
+    // Appliquer le tri uniquement sur les tâches actives
     switch (_currentSort) {
       case SortType.dueDate:
-        filtered.sort((a, b) {
+        activeTasks.sort((a, b) {
           if (a.dueDate == null && b.dueDate == null) return 0;
           if (a.dueDate == null) return 1;
           if (b.dueDate == null) return -1;
@@ -2126,21 +2379,72 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
         });
         break;
       case SortType.name:
-        filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        activeTasks.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
         break;
       case SortType.dateAdded:
-        filtered.sort((a, b) => b.id.compareTo(a.id)); // Plus récent en premier
+        activeTasks.sort((a, b) {
+          // Pour chaque tâche, trouver la date la plus récente (tâche elle-même ou ses sous-tâches)
+          int getMostRecentId(TodoItem task) {
+            final subTasks = _getAllSubTasks(task.id);
+            if (subTasks.isEmpty) {
+              return task.id;
+            }
+            // Trouver l'ID le plus récent parmi la tâche et ses sous-tâches
+            int maxId = task.id;
+            for (final subTask in subTasks) {
+              if (subTask.id > maxId) {
+                maxId = subTask.id;
+              }
+            }
+            return maxId;
+          }
+          
+          final aMostRecent = getMostRecentId(a);
+          final bMostRecent = getMostRecentId(b);
+          final comparison = bMostRecent.compareTo(aMostRecent);
+          
+          // Log détaillé pour déboguer
+          if (aMostRecent != a.id || bMostRecent != b.id) {
+            debugPrint('🔍 [TRI] "${a.title}" (ID: ${a.id}, MostRecent: $aMostRecent) vs "${b.title}" (ID: ${b.id}, MostRecent: $bMostRecent) → $comparison');
+          }
+          
+          return comparison; // Plus récent en premier
+        });
         break;
       case SortType.priority:
-        filtered.sort((a, b) => _getPriorityValue(b.priority).compareTo(_getPriorityValue(a.priority)));
+        activeTasks.sort((a, b) => _getPriorityValue(b.priority).compareTo(_getPriorityValue(a.priority)));
         break;
     }
     
-    // Toujours placer les tâches terminées en bas
-    filtered.sort((a, b) {
-      if (a.isCompleted == b.isCompleted) return 0;
-      return a.isCompleted ? 1 : -1; // Terminées en bas
-    });
+    // Trier aussi les tâches terminées par date d'ajout (plus récentes en premier)
+    completedTasks.sort((a, b) => b.id.compareTo(a.id));
+    
+    // Recombiner : tâches actives d'abord, puis tâches terminées
+    filtered = [...activeTasks, ...completedTasks];
+    
+    // Appliquer le filtre de recherche si un terme de recherche est saisi
+    if (_searchQuery.isNotEmpty) {
+      final query = _searchQuery.toLowerCase().trim();
+      filtered = filtered.where((todo) {
+        final titleMatch = todo.title.toLowerCase().contains(query);
+        final descriptionMatch = todo.description?.toLowerCase().contains(query) ?? false;
+        return titleMatch || descriptionMatch;
+      }).toList();
+      debugPrint('🔍 [RECHERCHE] "${_searchQuery}" → ${filtered.length} tâches trouvées');
+    }
+    
+    // Log de débogage pour vérifier l'ordre final
+    if (_currentSort == SortType.dateAdded && filtered.isNotEmpty) {
+      debugPrint('🔍 [TRI FINAL] Ordre des tâches après tri par date d\'ajout:');
+      for (int i = 0; i < filtered.length && i < 5; i++) {
+        final task = filtered[i];
+        final subTasks = _getAllSubTasks(task.id);
+        final mostRecentId = subTasks.isEmpty
+            ? task.id
+            : [task.id, ...subTasks.map((t) => t.id)].reduce((a, b) => a > b ? a : b);
+        debugPrint('  ${i + 1}. "${task.title}" (ID: ${task.id}, MostRecent: $mostRecentId, Completed: ${task.isCompleted})');
+      }
+    }
     
     return filtered;
   }
@@ -2410,36 +2714,43 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                     );
                   }),
                   
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: InkWell(
-                      onTap: () {
-                        Navigator.pop(context);
-                        _addProject();
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: DSColor.surfaceTint, width: 2),
+                  Builder(
+                    builder: (context) {
+                      final brightness = Theme.of(context).brightness;
+                      final borderColor = DSColor.getSurfaceTint(brightness);
+                      
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: InkWell(
+                          onTap: () {
+                            Navigator.pop(context);
+                            _addProject();
+                          },
                           borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add, size: 20, color: DSColor.primary),
-                            SizedBox(width: 8),
-                            Text(
-                              'Nouveau projet',
-                              style: TextStyle(
-                                color: DSColor.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: borderColor, width: 2),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                          ],
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.add, size: 20, color: DSColor.primary),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Nouveau projet',
+                                  style: TextStyle(
+                                    color: DSColor.primary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -2488,15 +2799,97 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        IconButton(
-                          icon: Icon(Icons.mic, color: headingColor),
-                          onPressed: _addTodoByVoice,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: Icon(
+                                _isSearchActive ? Icons.close : Icons.search,
+                                color: headingColor,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _isSearchActive = !_isSearchActive;
+                                  if (!_isSearchActive) {
+                                    _searchQuery = '';
+                                  }
+                                });
+                              },
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.mic, color: headingColor),
+                              onPressed: _addTodoByVoice,
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   );
                 },
               ),
+
+              // --- SEARCH FIELD ---
+              if (_isSearchActive)
+                Builder(
+                  builder: (context) {
+                    final brightness = Theme.of(context).brightness;
+                    final surfaceColor = DSColor.getSurface(brightness);
+                    final headingColor = DSColor.getHeading(brightness);
+                    final mutedColor = DSColor.getMuted(brightness);
+                    
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: surfaceColor,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: brightness == Brightness.dark
+                              ? []
+                              : [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.03),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                        ),
+                        child: TextField(
+                          autofocus: true,
+                          onChanged: (value) {
+                            setState(() {
+                              _searchQuery = value;
+                            });
+                          },
+                          style: DSTypo.body.copyWith(color: headingColor),
+                          decoration: InputDecoration(
+                            hintText: 'Rechercher une tâche...',
+                            hintStyle: DSTypo.body.copyWith(color: mutedColor),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            filled: true,
+                            fillColor: surfaceColor,
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(color: DSColor.primary, width: 1.5),
+                            ),
+                            prefixIcon: const Icon(Icons.search, color: DSColor.primary, size: 20),
+                            suffixIcon: _searchQuery.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear, size: 18, color: DSColor.muted),
+                                    onPressed: () {
+                                      setState(() {
+                                        _searchQuery = '';
+                                      });
+                                    },
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
 
               // --- SORT & STATS ---
               Builder(
@@ -2530,7 +2923,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                           ),
                         ),
                         const Spacer(),
-                        Text('${_filteredTodos.length} tâches', style: DSTypo.caption.copyWith(color: mutedColor)),
+                        Text('${_getActiveTasksCount()} tâches', style: DSTypo.caption.copyWith(color: mutedColor)),
                       ],
                     ),
                   );
@@ -2869,10 +3262,12 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     }
 
     // Determine Project info
-    final project = _projects.firstWhere(
-      (p) => p.id == todo.projectId,
-      orElse: () => Project(id: -1, name: 'Général', color: Colors.grey, icon: Icons.list),
-    );
+    final project = todo.projectId != null
+        ? _projects.firstWhere(
+            (p) => p.id == todo.projectId,
+            orElse: () => Project(id: -1, name: 'Général', color: Colors.grey, icon: Icons.list),
+          )
+        : Project(id: -1, name: 'Aucun projet', color: Colors.grey, icon: Icons.folder_off);
 
     final hasSubTasks = _getVisibleSubTasks(todo.id).isNotEmpty;
     final isExpanded = _expandedTasks.contains(todo.id);
@@ -2900,8 +3295,9 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
         category: project.name,
         title: todo.title,
         time: todo.dueDate != null 
-             ? "${todo.dueDate!.day}/${todo.dueDate!.month} ${todo.dueDate!.hour}:${todo.dueDate!.minute.toString().padLeft(2, '0')}"
-             : "Pas de date",
+             ? "${todo.dueDate!.day}/${todo.dueDate!.month}/${todo.dueDate!.year}"
+             : "",
+        reminder: todo.reminder,
         status: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -3129,7 +3525,9 @@ class _AddTodoModalState extends State<AddTodoModal> {
                   borderRadius: DSRadius.soft,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
+                      color: brightness == Brightness.dark 
+                          ? Colors.white.withOpacity(0.05)
+                          : Colors.black.withOpacity(0.03),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
@@ -3307,7 +3705,9 @@ class _AddTodoModalState extends State<AddTodoModal> {
                             borderRadius: DSRadius.soft,
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.03),
+                                color: brightness == Brightness.dark 
+                                    ? Colors.white.withOpacity(0.05)
+                                    : Colors.black.withOpacity(0.03),
                                 blurRadius: 4,
                                 offset: const Offset(0, 2),
                               ),
@@ -3610,32 +4010,33 @@ class _EditTodoModalState extends State<EditTodoModal> {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
     
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: keyboardHeight,
-        top: MediaQuery.of(context).padding.top + 16,
-      ),
-      child: Builder(
-        builder: (context) {
-          final brightness = Theme.of(context).brightness;
-          final surfaceSoftColor = DSColor.getSurfaceSoft(brightness);
-          final surfaceColor = DSColor.getSurface(brightness);
-          final headingColor = DSColor.getHeading(brightness);
-          final mutedColor = DSColor.getMuted(brightness);
-          
-          return SingleChildScrollView(
-            child: Container(
-              padding: EdgeInsets.only(
-                left: 24,
-                right: 24,
-                top: 24,
-                bottom: 24 + bottomPadding + 16, // Padding supplémentaire pour la barre de navigation Android
-              ),
-              decoration: BoxDecoration(
-                color: surfaceSoftColor,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-              child: Column(
+    return DSBackdrop(
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: keyboardHeight,
+          top: MediaQuery.of(context).padding.top + 16,
+        ),
+        child: Builder(
+          builder: (context) {
+            final brightness = Theme.of(context).brightness;
+            final surfaceSoftColor = DSColor.getSurfaceSoft(brightness);
+            final surfaceColor = DSColor.getSurface(brightness);
+            final headingColor = DSColor.getHeading(brightness);
+            final mutedColor = DSColor.getMuted(brightness);
+            
+            return SingleChildScrollView(
+              child: Container(
+                padding: EdgeInsets.only(
+                  left: 24,
+                  right: 24,
+                  top: 24,
+                  bottom: 24 + bottomPadding + 16, // Padding supplémentaire pour la barre de navigation Android
+                ),
+                decoration: BoxDecoration(
+                  color: surfaceSoftColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -3669,7 +4070,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
                   borderRadius: DSRadius.soft,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
+                      color: brightness == Brightness.dark 
+                          ? Colors.white.withOpacity(0.05)
+                          : Colors.black.withOpacity(0.03),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
@@ -3843,7 +4246,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
                             borderRadius: DSRadius.soft,
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.03),
+                                color: brightness == Brightness.dark 
+                                    ? Colors.white.withOpacity(0.05)
+                                    : Colors.black.withOpacity(0.03),
                                 blurRadius: 4,
                                 offset: const Offset(0, 2),
                               ),
@@ -3888,11 +4293,13 @@ class _EditTodoModalState extends State<EditTodoModal> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
-                  color: DSColor.surface,
+                  color: surfaceColor,
                   borderRadius: DSRadius.soft,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
+                      color: brightness == Brightness.dark 
+                          ? Colors.white.withOpacity(0.05)
+                          : Colors.black.withOpacity(0.03),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
@@ -3972,7 +4379,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
                               borderRadius: DSRadius.soft,
                               boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.03),
+                              color: brightness == Brightness.dark 
+                                  ? Colors.white.withOpacity(0.05)
+                                  : Colors.black.withOpacity(0.03),
                               blurRadius: 4,
                               offset: const Offset(0, 2),
                             ),
@@ -4031,7 +4440,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
                               borderRadius: DSRadius.soft,
                               boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.03),
+                              color: brightness == Brightness.dark 
+                                  ? Colors.white.withOpacity(0.05)
+                                  : Colors.black.withOpacity(0.03),
                               blurRadius: 4,
                               offset: const Offset(0, 2),
                             ),
@@ -4087,17 +4498,33 @@ class _EditTodoModalState extends State<EditTodoModal> {
                 ),
                 if (_subTasks.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _subTasks.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final subTask = _subTasks[index];
+                  Builder(
+                    builder: (context) {
+                      // Trier les sous-tâches : non terminées en premier, terminées en dernier
+                      final sortedSubTasks = List<TodoItem>.from(_subTasks)
+                        ..sort((a, b) {
+                          if (a.isCompleted == b.isCompleted) return 0;
+                          return a.isCompleted ? 1 : -1; // Non terminées en premier
+                        });
+                      
+                      return ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: sortedSubTasks.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final subTask = sortedSubTasks[index];
+                          // Trouver l'index original pour la suppression
+                          final originalIndex = _subTasks.indexWhere((t) => t.id == subTask.id);
+                      final brightness = Theme.of(context).brightness;
+                      final surfaceSoftColor = DSColor.getSurfaceSoft(brightness);
+                      final bodyColor = DSColor.getBody(brightness);
+                      final mutedColor = DSColor.getMuted(brightness);
+                      
                       return Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: DSColor.surfaceSoft,
+                          color: surfaceSoftColor,
                           borderRadius: DSRadius.soft,
                         ),
                         child: Row(
@@ -4162,7 +4589,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
                                   subTask.title,
                                   style: DSTypo.body.copyWith(
                                     decoration: subTask.isCompleted ? TextDecoration.lineThrough : null,
-                                    color: subTask.isCompleted ? DSColor.muted : DSColor.body,
+                                    color: subTask.isCompleted ? mutedColor : bodyColor,
                                   ),
                                 ),
                               ),
@@ -4172,7 +4599,9 @@ class _EditTodoModalState extends State<EditTodoModal> {
                               onPressed: () {
                                 debugPrint('🟢 [EditTodoModal] Suppression de sous-tâche: ${subTask.title} (ID: ${subTask.id})');
                                 setState(() {
-                                  _subTasks.removeAt(index);
+                                  if (originalIndex != -1) {
+                                    _subTasks.removeAt(originalIndex);
+                                  }
                                   final mainIndex = widget.homeState._todos.indexWhere((t) => t.id == subTask.id);
                                   if (mainIndex != -1) {
                                     widget.homeState._todos.removeAt(mainIndex);
@@ -4185,6 +4614,8 @@ class _EditTodoModalState extends State<EditTodoModal> {
                             ),
                           ],
                         ),
+                      );
+                    },
                       );
                     },
                   ),
@@ -4288,6 +4719,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
           );
         },
       ),
+      ),
     );
   }
 
@@ -4390,7 +4822,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
       }
       
       // Sauvegarder et forcer le rafraîchissement
-      widget.homeState._saveData().then((_) {
+      widget.homeState._saveData().then((_) async {
         debugPrint('✅ _saveChanges(): Tâche et sous-tâches sauvegardées avec succès');
         
         // Forcer un rafraîchissement complet de la vue
