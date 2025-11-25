@@ -568,27 +568,37 @@ class _TodoHomePageState extends State<TodoHomePage> {
   Future<void> _handleTodoResult(dynamic result) async {
     if (result != null && result['todo'] != null) {
       final newTodo = result['todo'] as TodoItem;
-      final subTasks = result['subTasks'] as List<TodoItem>? ?? [];
+      final rawSubTasks = result['subTasks'] as List?;
+      final List<TodoItem> subTasks = [];
+
+      if (rawSubTasks != null) {
+        for (final item in rawSubTasks) {
+          if (item is TodoItem) {
+            subTasks.add(item);
+          } else if (item is Map<String, dynamic>) {
+            // Support fallback if les sous-tâches arrivent sérialisées
+            try {
+              subTasks.add(TodoItem.fromJson(item));
+            } catch (_) {
+              try {
+                subTasks.add(TodoItem.fromMap(item));
+              } catch (_) {
+                debugPrint('❌ Impossible de parser une sous-tâche: $item');
+              }
+            }
+          }
+        }
+      }
       
       setState(() {
         _todos.add(newTodo);
         
         // Ajouter les sous-tâches avec le bon parentId
         for (final subTask in subTasks) {
-          final updatedSubTask = TodoItem(
-            id: subTask.id,
-            title: subTask.title,
-            description: subTask.description,
-            dueDate: subTask.dueDate,
-            priority: subTask.priority,
-            projectId: subTask.projectId,
-            isCompleted: subTask.isCompleted,
+          final updatedSubTask = subTask.copyWith(
             parentId: newTodo.id, // Lier à la tâche parente
-            level: subTask.level,
-            reminder: subTask.reminder,
-            estimatedMinutes: subTask.estimatedMinutes,
-            elapsedMinutes: subTask.elapsedMinutes,
-            elapsedSeconds: subTask.elapsedSeconds,
+            level: newTodo.level + 1,
+            projectId: newTodo.projectId, // Hériter du projet de la tâche principale
           );
           _todos.add(updatedSubTask);
         }
@@ -1459,6 +1469,12 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     final wasCompleted = todo.isCompleted;
     final isNowCompleted = !wasCompleted;
     
+    // Pour l'undo
+    TodoItem? previousState;
+    if (!wasCompleted) {
+      previousState = todo.copyWith(isCompleted: wasCompleted);
+    }
+
     // Mettre à jour l'état immédiatement pour déclencher l'animation
     setState(() {
       try {
@@ -1512,6 +1528,29 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     
     // Sauvegarder les données
     await _saveData();
+
+    // SnackBar avec action d'annulation uniquement quand on marque comme terminé
+    if (isNowCompleted && previousState != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Tâche "${todo.title}" marquée comme terminée'),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Annuler',
+            onPressed: () async {
+              final index = _todos.indexWhere((t) => t.id == todo.id);
+              if (index != -1) {
+                setState(() {
+                  _todos[index] = previousState!;
+                });
+                await _saveData();
+              }
+            },
+          ),
+        ),
+      );
+    }
   }
 
   void _deleteTodo(int id) async {
@@ -3399,21 +3438,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     final isExpanded = _expandedTasks.contains(todo.id);
 
     return GestureDetector(
-      onTap: () {
-        if (hasSubTasks) {
-          // Toggle expansion si la tâche a des sous-tâches
-          setState(() {
-            if (isExpanded) {
-              _expandedTasks.remove(todo.id);
-            } else {
-              _expandedTasks.add(todo.id);
-            }
-          });
-        } else {
-          // Sinon, ouvrir le modal d'édition
-          _editTodo(todo);
-        }
-      },
+      onTap: () => _editTodo(todo),
       onLongPress: enableLongPressEdit ? () => _editTodo(todo) : null,
       child: DSTaskCard(
         categoryIcon: project.icon,
@@ -3428,12 +3453,26 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
           mainAxisSize: MainAxisSize.min,
           children: [
             if (hasSubTasks)
-              Icon(
-                isExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
-                size: 16,
-                color: DSColor.muted,
+              IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                iconSize: 18,
+                icon: Icon(
+                  isExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
+                  color: DSColor.muted,
+                ),
+                onPressed: () {
+                  setState(() {
+                    if (isExpanded) {
+                      _expandedTasks.remove(todo.id);
+                    } else {
+                      _expandedTasks.add(todo.id);
+                    }
+                  });
+                },
+                tooltip: isExpanded ? 'Masquer les sous-tâches' : 'Afficher les sous-tâches',
               ),
-            const SizedBox(width: 4),
+            if (hasSubTasks) const SizedBox(width: 6),
             statusWidget,
           ],
         ),
