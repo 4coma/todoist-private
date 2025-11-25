@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
 class Project {
+  // Helper pour créer un IconData constant à partir d'un codePoint
+  static IconData _getIconData(int codePoint) {
+    return IconData(codePoint, fontFamily: 'MaterialIcons');
+  }
   final int id;
   final String name;
   final Color color;
@@ -37,7 +41,7 @@ class Project {
       id: map['id'],
       name: map['name'],
       color: Color(map['color']),
-      icon: map['icon'] != null ? IconData(map['icon'], fontFamily: 'MaterialIcons') : Icons.folder,
+      icon: map['icon'] != null ? _getIconData(map['icon']) : Icons.folder,
       createdAt: map['createdAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['createdAt']) : DateTime.now(),
       updatedAt: map['updatedAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['updatedAt']) : DateTime.now(),
     );
@@ -61,7 +65,7 @@ class Project {
       id: json['id'] as int,
       name: json['name'] as String,
       color: Color(json['color'] as int),
-      icon: json['icon'] != null ? IconData(json['icon'] as int, fontFamily: 'MaterialIcons') : Icons.folder,
+      icon: json['icon'] != null ? _getIconData(json['icon'] as int) : Icons.folder,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );

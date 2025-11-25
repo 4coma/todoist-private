@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
@@ -93,11 +94,53 @@ class _TodoAppState extends State<TodoApp> {
   ThemeData _currentTheme = AppThemes.blueTheme;
   String _selectedColor = 'blue';
   bool _isDarkMode = false;
+  bool _autoThemeMode = false;
+  Timer? _themeCheckTimer;
 
   @override
   void initState() {
     super.initState();
     _loadSavedTheme();
+    _startThemeCheckTimer();
+  }
+
+  @override
+  void dispose() {
+    _themeCheckTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Détermine si le mode sombre doit être activé selon l'heure (21h-8h)
+  bool _shouldUseDarkModeByTime() {
+    final now = DateTime.now();
+    final hour = now.hour;
+    // Dark mode de 21h (21) à 8h (8) du matin
+    return hour >= 21 || hour < 8;
+  }
+
+  /// Vérifie l'heure et met à jour le thème si nécessaire
+  void _checkAndUpdateTheme() {
+    if (_autoThemeMode) {
+      final shouldBeDark = _shouldUseDarkModeByTime();
+      if (shouldBeDark != _isDarkMode) {
+        setState(() {
+          _isDarkMode = shouldBeDark;
+          _currentTheme = AppThemes.getTheme(_selectedColor, _isDarkMode);
+        });
+        debugPrint('🔄 Thème automatique mis à jour: ${_isDarkMode ? "dark" : "light"}');
+      }
+    }
+  }
+
+  /// Démarre un timer pour vérifier périodiquement l'heure
+  void _startThemeCheckTimer() {
+    _themeCheckTimer?.cancel();
+    if (_autoThemeMode) {
+      // Vérifier toutes les minutes
+      _themeCheckTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+        _checkAndUpdateTheme();
+      });
+    }
   }
 
   Future<void> _loadSavedTheme() async {
@@ -105,13 +148,24 @@ class _TodoAppState extends State<TodoApp> {
       final prefs = await SharedPreferences.getInstance();
       final selectedColor = prefs.getString('selected_color') ?? 'blue';
       final isDarkMode = prefs.getBool('is_dark_mode') ?? false;
+      final autoThemeMode = prefs.getBool('auto_theme_mode') ?? false;
       
       setState(() {
         _selectedColor = selectedColor;
-        _isDarkMode = isDarkMode;
-        _currentTheme = AppThemes.getTheme(selectedColor, isDarkMode);
+        _autoThemeMode = autoThemeMode;
+        
+        // Si le mode automatique est activé, déterminer le thème selon l'heure
+        if (autoThemeMode) {
+          _isDarkMode = _shouldUseDarkModeByTime();
+        } else {
+          _isDarkMode = isDarkMode;
+        }
+        
+        _currentTheme = AppThemes.getTheme(selectedColor, _isDarkMode);
       });
-      debugPrint('✅ Thème chargé: couleur=$selectedColor, dark=$isDarkMode');
+      
+      _startThemeCheckTimer();
+      debugPrint('✅ Thème chargé: couleur=$selectedColor, dark=$_isDarkMode, auto=$autoThemeMode');
     } catch (e) {
       debugPrint('❌ Erreur lors du chargement du thème: $e');
     }
@@ -120,18 +174,57 @@ class _TodoAppState extends State<TodoApp> {
   void _changeTheme(String colorName, bool isDarkMode) async {
     setState(() {
       _selectedColor = colorName;
-      _isDarkMode = isDarkMode;
-      _currentTheme = AppThemes.getTheme(colorName, isDarkMode);
+      // Si le mode automatique est activé, ne pas changer manuellement le dark mode
+      if (!_autoThemeMode) {
+        _isDarkMode = isDarkMode;
+      }
+      _currentTheme = AppThemes.getTheme(colorName, _isDarkMode);
     });
     
     // Sauvegarder les préférences de thème
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('selected_color', colorName);
-      await prefs.setBool('is_dark_mode', isDarkMode);
-      debugPrint('✅ Thème sauvegardé: couleur=$colorName, dark=$isDarkMode');
+      if (!_autoThemeMode) {
+        await prefs.setBool('is_dark_mode', isDarkMode);
+      }
+      debugPrint('✅ Thème sauvegardé: couleur=$colorName, dark=$_isDarkMode, auto=$_autoThemeMode');
     } catch (e) {
       debugPrint('❌ Erreur lors de la sauvegarde du thème: $e');
+    }
+  }
+
+  void _setAutoThemeMode(bool enabled) async {
+    bool newDarkMode = _isDarkMode;
+    
+    if (enabled) {
+      // Activer le mode automatique : déterminer le thème selon l'heure
+      newDarkMode = _shouldUseDarkModeByTime();
+    } else {
+      // Désactiver le mode automatique : charger la préférence sauvegardée
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        newDarkMode = prefs.getBool('is_dark_mode') ?? false;
+      } catch (e) {
+        debugPrint('❌ Erreur lors du chargement de la préférence dark mode: $e');
+      }
+    }
+    
+    setState(() {
+      _autoThemeMode = enabled;
+      _isDarkMode = newDarkMode;
+      _currentTheme = AppThemes.getTheme(_selectedColor, _isDarkMode);
+    });
+    
+    _startThemeCheckTimer();
+    
+    // Sauvegarder la préférence
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('auto_theme_mode', enabled);
+      debugPrint('✅ Mode automatique ${enabled ? "activé" : "désactivé"}');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la sauvegarde du mode automatique: $e');
     }
   }
 
@@ -209,6 +302,8 @@ class _TodoAppState extends State<TodoApp> {
       home: TodoHomePage(
         onThemeChanged: _changeTheme,
         onThemeChangedLegacy: _changeThemeLegacy,
+        autoThemeMode: _autoThemeMode,
+        onAutoThemeModeChanged: _setAutoThemeMode,
       ),
     );
   }
@@ -229,11 +324,15 @@ enum ViewMode {
 class TodoHomePage extends StatefulWidget {
   final Function(String, bool) onThemeChanged;
   final Function(ThemeData) onThemeChangedLegacy;
+  final bool autoThemeMode;
+  final Function(bool) onAutoThemeModeChanged;
   
   const TodoHomePage({
     super.key, 
     required this.onThemeChanged,
     required this.onThemeChangedLegacy,
+    this.autoThemeMode = false,
+    required this.onAutoThemeModeChanged,
   });
 
   @override
@@ -253,6 +352,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   bool _showDescriptions = false;
   bool _showCompletedTasks = false; // Mode "Tâches achevées" (sidebar)
   bool _showCompletedTasksInProjects = false; // Option "Afficher les tâches terminées" (paramètres)
+  bool _showNoProjectTasks = false; // Mode "Tâches sans projet"
   bool _isSearchActive = false; // État de la recherche
   String _searchQuery = ''; // Terme de recherche
 
@@ -1359,87 +1459,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     final wasCompleted = todo.isCompleted;
     final isNowCompleted = !wasCompleted;
     
-    // Si on marque comme terminée, ajouter les effets spéciaux
-    if (isNowCompleted) {
-      // Afficher le toast avec bouton d'annulation
-      if (mounted) {
-        final scaffoldMessenger = ScaffoldMessenger.of(context);
-        final snackBar = SnackBar(
-          content: Row(
-            children: [
-              Icon(
-                Icons.check_circle,
-                color: Colors.white,
-                size: 20,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Tâche "${todo.title}" marquée comme terminée',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Theme.of(context).colorScheme.primary,
-          duration: const Duration(seconds: 4),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          margin: const EdgeInsets.all(16),
-          action: SnackBarAction(
-            label: 'Annuler',
-            textColor: Colors.white,
-            onPressed: () {
-              // Annuler l'action
-              setState(() {
-                todo.isCompleted = false;
-              });
-              _saveData();
-              
-              // Afficher un toast de confirmation d'annulation
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Row(
-                    children: [
-                      Icon(
-                        Icons.undo,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Action annulée pour "${todo.title}"',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  backgroundColor: Colors.orange,
-                  duration: const Duration(seconds: 2),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  margin: const EdgeInsets.all(16),
-                ),
-              );
-            },
-          ),
-        );
-        
-        scaffoldMessenger.showSnackBar(snackBar);
-      }
-    }
-    
+    // Mettre à jour l'état immédiatement pour déclencher l'animation
     setState(() {
       try {
         todo.isCompleted = isNowCompleted;
@@ -2129,6 +2149,8 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
             _loadData();
           },
           onDataReload: _loadData,
+          autoThemeMode: widget.autoThemeMode,
+          onAutoThemeModeChanged: widget.onAutoThemeModeChanged,
         ),
       ),
     );
@@ -2334,6 +2356,9 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     if (_showCompletedTasks) {
       // Mode "Tâches achevées" - retourner 0 car on ne compte que les actives
       return 0;
+    } else if (_showNoProjectTasks) {
+      // Vue "Tâches sans projet" - compter uniquement les tâches actives sans projet
+      return _todos.where((todo) => !todo.isCompleted && todo.projectId == null && todo.isRootTask).length;
     } else if (_selectedProject == null) {
       // Vue "Toutes les tâches" - compter uniquement les tâches actives (non terminées)
       return _todos.where((todo) => !todo.isCompleted && todo.isRootTask).length;
@@ -2354,6 +2379,10 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
       // Mode "Tâches achevées" - afficher seulement les tâches terminées
       filtered = _todos.where((todo) => todo.isCompleted && todo.isRootTask).toList();
       debugPrint('🔍 [FILTRAGE] Mode tâches achevées: ${filtered.length} tâches');
+    } else if (_showNoProjectTasks) {
+      // Vue "Tâches sans projet" - afficher les tâches sans projet (non terminées ou toutes si l'option est activée)
+      filtered = _todos.where((todo) => todo.projectId == null && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTRAGE] Vue tâches sans projet: ${filtered.length} tâches (showCompletedTasksInProjects: $_showCompletedTasksInProjects)');
     } else if (_selectedProject == null) {
       // Vue "Toutes les tâches" - afficher les tâches non terminées (ou toutes si l'option est activée)
       filtered = _todos.where((todo) => (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
@@ -2465,6 +2494,8 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
   String _getAppBarTitle() {
     if (_showCompletedTasks) {
       return 'Tâches achevées';
+    } else if (_showNoProjectTasks) {
+      return 'Tâches sans projet';
     } else if (_selectedProject == null) {
       return 'Toutes les tâches';
     } else {
@@ -2657,11 +2688,12 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                   _buildDrawerItem(
                     icon: Icons.list,
                     label: 'Toutes les tâches',
-                    isSelected: _selectedProject == null && !_showCompletedTasks && _currentView == ViewMode.list,
+                    isSelected: _selectedProject == null && !_showCompletedTasks && !_showNoProjectTasks && _currentView == ViewMode.list,
                     onTap: () {
                       setState(() {
                         _selectedProject = null;
                         _showCompletedTasks = false;
+                        _showNoProjectTasks = false;
                         _currentView = ViewMode.list;
                       });
                       Navigator.pop(context);
@@ -2685,6 +2717,8 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                     onTap: () {
                       setState(() {
                         _showCompletedTasks = true;
+                        _showNoProjectTasks = false;
+                        _selectedProject = null;
                       });
                       Navigator.pop(context);
                     },
@@ -2697,6 +2731,21 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                     ),
                   ),
                   
+                  _buildDrawerItem(
+                    icon: Icons.folder_off_outlined,
+                    label: 'Tâches sans projet',
+                    count: _todos.where((t) => t.projectId == null && !t.isCompleted).length,
+                    isSelected: _showNoProjectTasks,
+                    onTap: () {
+                      setState(() {
+                        _showNoProjectTasks = true;
+                        _showCompletedTasks = false;
+                        _selectedProject = null;
+                      });
+                      Navigator.pop(context);
+                    },
+                  ),
+                  
                   ..._projects.map((project) {
                     final count = _todos.where((t) => t.projectId == project.id && !t.isCompleted).length;
                     return _buildDrawerItem(
@@ -2706,7 +2755,11 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                       count: count,
                       isSelected: _selectedProject?.id == project.id,
                       onTap: () {
-                        setState(() => _selectedProject = project);
+                        setState(() {
+                          _selectedProject = project;
+                          _showNoProjectTasks = false;
+                          _showCompletedTasks = false;
+                        });
                         Navigator.pop(context);
                       },
                       onEdit: () => _editProject(project),
@@ -3603,7 +3656,8 @@ class _AddTodoModalState extends State<AddTodoModal> {
                 label: 'Description',
                 controller: _descriptionController,
                 hint: 'Détails supplémentaires (optionnel)',
-                maxLines: 3,
+                maxLines: 10, // Maximum de 10 lignes visibles
+                minLines: 4, // Hauteur minimale de 4 lignes pour une meilleure visibilité
               ),
               const SizedBox(height: 16),
 
@@ -4148,7 +4202,8 @@ class _EditTodoModalState extends State<EditTodoModal> {
                 label: 'Description',
                 controller: _descriptionController,
                 hint: 'Détails supplémentaires (optionnel)',
-                maxLines: 3,
+                maxLines: 10, // Maximum de 10 lignes visibles
+                minLines: 4, // Hauteur minimale de 4 lignes pour une meilleure visibilité
               ),
               const SizedBox(height: 16),
               
@@ -5176,6 +5231,8 @@ class SettingsScreen extends StatefulWidget {
   final Function(ThemeData) onThemeChangedLegacy;
   final Function() onSettingsChanged;
   final Function() onDataReload;
+  final bool autoThemeMode;
+  final Function(bool) onAutoThemeModeChanged;
   
   const SettingsScreen({
     super.key, 
@@ -5183,6 +5240,8 @@ class SettingsScreen extends StatefulWidget {
     required this.onThemeChangedLegacy,
     required this.onSettingsChanged,
     required this.onDataReload,
+    this.autoThemeMode = false,
+    required this.onAutoThemeModeChanged,
   });
 
   @override
@@ -5468,7 +5527,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             Expanded(
                               child: _buildModeOptionSettings('Sombre', true, Icons.nightlight_round),
                             ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _buildModeOptionSettings('Auto', null, Icons.brightness_auto),
+                            ),
                           ],
+                        ),
+                        const SizedBox(height: 12),
+                        Builder(
+                          builder: (context) {
+                            final brightness = Theme.of(context).brightness;
+                            final bodyColor = DSColor.getBody(brightness);
+                            final mutedColor = DSColor.getMuted(brightness);
+                            
+                            return Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: DSColor.getSurfaceSoft(brightness),
+                                borderRadius: DSRadius.soft,
+                                border: Border.all(
+                                  color: widget.autoThemeMode ? DSColor.primary.withOpacity(0.3) : mutedColor.withOpacity(0.2),
+                                  width: widget.autoThemeMode ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.info_outline,
+                                    size: 16,
+                                    color: widget.autoThemeMode ? DSColor.primary : mutedColor,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      widget.autoThemeMode
+                                          ? 'Mode automatique activé (21h-8h = sombre)'
+                                          : 'Mode automatique désactivé',
+                                      style: DSTypo.caption.copyWith(
+                                        color: widget.autoThemeMode ? bodyColor : mutedColor,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -5872,16 +5975,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildModeOptionSettings(String name, bool isDark, IconData icon) {
-    final isSelected = _isDarkMode == isDark;
+  Widget _buildModeOptionSettings(String name, bool? isDark, IconData icon) {
     final brightness = Theme.of(context).brightness;
+    final isSelected = isDark == null 
+        ? widget.autoThemeMode 
+        : (!widget.autoThemeMode && _isDarkMode == isDark);
     
     return InkWell(
       onTap: () {
-        widget.onThemeChanged(_selectedColor, isDark);
-        setState(() {
-          _isDarkMode = isDark;
-        });
+        if (isDark == null) {
+          // Mode automatique
+          widget.onAutoThemeModeChanged(!widget.autoThemeMode);
+        } else {
+          // Mode manuel (clair ou sombre)
+          widget.onAutoThemeModeChanged(false);
+          widget.onThemeChanged(_selectedColor, isDark);
+          setState(() {
+            _isDarkMode = isDark;
+          });
+        }
       },
       borderRadius: DSRadius.soft,
       child: Container(

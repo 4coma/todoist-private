@@ -7,6 +7,7 @@ class DSTextField extends StatelessWidget {
   final String? hint;
   final TextEditingController? controller;
   final int? maxLines;
+  final int? minLines;
   final bool readOnly;
   final VoidCallback? onTap;
   final Widget? suffixIcon;
@@ -21,6 +22,7 @@ class DSTextField extends StatelessWidget {
     this.hint,
     this.controller,
     this.maxLines = 1,
+    this.minLines,
     this.readOnly = false,
     this.onTap,
     this.suffixIcon,
@@ -65,6 +67,7 @@ class DSTextField extends StatelessWidget {
           child: TextField(
             controller: controller,
             maxLines: maxLines,
+            minLines: minLines,
             readOnly: readOnly,
             onTap: onTap,
             onChanged: onChanged,
