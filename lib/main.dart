@@ -1659,6 +1659,14 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     });
 
     _saveData();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Tâche déplacée comme sous-tâche'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   // Remonte une tâche au niveau supérieur (supprime le parent)
@@ -1673,33 +1681,34 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     debugPrint('🔍 Tâche à remonter: ${task.title} (ID: $taskId)');
     debugPrint('🔍 Ancien parentId: ${task.parentId}');
     debugPrint('🔍 Ancien niveau: ${task.level}');
-
+  
     final currentLevel = task.level;
     final levelDiff = currentLevel - 0; // Remonter au niveau 0
-
+  
     setState(() {
       _todos[taskIndex] = task.copyWith(parentId: null, level: 0);
       debugPrint('✅ Tâche remontée: parentId = null, level = 0');
-
-      // Remonter toutes les sous-tâches et mettre à jour leur parentId
+  
+      // Remonter toutes les sous-tâches et ajuster leur niveau (on conserve la hiérarchie)
       for (final sub in _getAllSubTasks(taskId)) {
         final idx = _todos.indexWhere((t) => t.id == sub.id);
         if (idx != -1) {
-          // Si la sous-tâche avait cette tâche comme parent, elle devient racine
-          if (sub.parentId == taskId) {
-            _todos[idx] = sub.copyWith(parentId: null, level: sub.level - levelDiff);
-            debugPrint('✅ Sous-tâche ${sub.title} devient racine (parentId = null)');
-          } else {
-            // Sinon, juste ajuster le niveau
-            _todos[idx] = sub.copyWith(level: sub.level - levelDiff);
-            debugPrint('✅ Sous-tâche ${sub.title} niveau ajusté: ${sub.level} -> ${sub.level - levelDiff}');
-          }
+          _todos[idx] = sub.copyWith(level: sub.level - levelDiff);
+          debugPrint('✅ Sous-tâche ${sub.title} niveau ajusté: ${sub.level} -> ${sub.level - levelDiff}');
         }
       }
     });
 
     debugPrint('🔍 === FIN REMONTÉE ===');
     _saveData();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Tâche remontée au niveau principal'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   // Widget utilisé comme aperçu lors du déplacement d'une tâche
@@ -2370,27 +2379,18 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 
   List<TodoItem> get _filteredTodos {
     List<TodoItem> filtered;
-    
-    debugPrint('🔍 [FILTRAGE] _showCompletedTasksInProjects = $_showCompletedTasksInProjects');
-    debugPrint('🔍 [FILTRAGE] _showCompletedTasks = $_showCompletedTasks');
-    debugPrint('🔍 [FILTRAGE] _selectedProject = ${_selectedProject?.name ?? "null"}');
-    
     if (_showCompletedTasks) {
       // Mode "Tâches achevées" - afficher seulement les tâches terminées
       filtered = _todos.where((todo) => todo.isCompleted && todo.isRootTask).toList();
-      debugPrint('🔍 [FILTRAGE] Mode tâches achevées: ${filtered.length} tâches');
     } else if (_showNoProjectTasks) {
       // Vue "Tâches sans projet" - afficher les tâches sans projet (non terminées ou toutes si l'option est activée)
       filtered = _todos.where((todo) => todo.projectId == null && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
-      debugPrint('🔍 [FILTRAGE] Vue tâches sans projet: ${filtered.length} tâches (showCompletedTasksInProjects: $_showCompletedTasksInProjects)');
     } else if (_selectedProject == null) {
       // Vue "Toutes les tâches" - afficher les tâches non terminées (ou toutes si l'option est activée)
       filtered = _todos.where((todo) => (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
-      debugPrint('🔍 [FILTRAGE] Vue toutes les tâches: ${filtered.length} tâches (showCompletedTasksInProjects: $_showCompletedTasksInProjects)');
     } else {
       // Vue projet spécifique - afficher les tâches du projet (non terminées ou toutes si l'option est activée)
       filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
-      debugPrint('🔍 [FILTRAGE] Vue projet ${_selectedProject!.name}: ${filtered.length} tâches (showCompletedTasksInProjects: $_showCompletedTasksInProjects)');
     }
     
     // Séparer les tâches terminées et non terminées AVANT le tri
@@ -2430,14 +2430,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
           
           final aMostRecent = getMostRecentId(a);
           final bMostRecent = getMostRecentId(b);
-          final comparison = bMostRecent.compareTo(aMostRecent);
-          
-          // Log détaillé pour déboguer
-          if (aMostRecent != a.id || bMostRecent != b.id) {
-            debugPrint('🔍 [TRI] "${a.title}" (ID: ${a.id}, MostRecent: $aMostRecent) vs "${b.title}" (ID: ${b.id}, MostRecent: $bMostRecent) → $comparison');
-          }
-          
-          return comparison; // Plus récent en premier
+          return bMostRecent.compareTo(aMostRecent); // Plus récent en premier
         });
         break;
       case SortType.priority:
@@ -2452,28 +2445,14 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     filtered = [...activeTasks, ...completedTasks];
     
     // Appliquer le filtre de recherche si un terme de recherche est saisi
-    if (_searchQuery.isNotEmpty) {
-      final query = _searchQuery.toLowerCase().trim();
-      filtered = filtered.where((todo) {
-        final titleMatch = todo.title.toLowerCase().contains(query);
-        final descriptionMatch = todo.description?.toLowerCase().contains(query) ?? false;
-        return titleMatch || descriptionMatch;
-      }).toList();
-      debugPrint('🔍 [RECHERCHE] "${_searchQuery}" → ${filtered.length} tâches trouvées');
-    }
-    
-    // Log de débogage pour vérifier l'ordre final
-    if (_currentSort == SortType.dateAdded && filtered.isNotEmpty) {
-      debugPrint('🔍 [TRI FINAL] Ordre des tâches après tri par date d\'ajout:');
-      for (int i = 0; i < filtered.length && i < 5; i++) {
-        final task = filtered[i];
-        final subTasks = _getAllSubTasks(task.id);
-        final mostRecentId = subTasks.isEmpty
-            ? task.id
-            : [task.id, ...subTasks.map((t) => t.id)].reduce((a, b) => a > b ? a : b);
-        debugPrint('  ${i + 1}. "${task.title}" (ID: ${task.id}, MostRecent: $mostRecentId, Completed: ${task.isCompleted})');
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase().trim();
+        filtered = filtered.where((todo) {
+          final titleMatch = todo.title.toLowerCase().contains(query);
+          final descriptionMatch = todo.description?.toLowerCase().contains(query) ?? false;
+          return titleMatch || descriptionMatch;
+        }).toList();
       }
-    }
     
     return filtered;
   }
@@ -3063,6 +3042,102 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     );
   }
 
+  Widget _buildDraggableTaskRow(TodoItem todo) {
+    final hasSubTasks = _getVisibleSubTasks(todo.id).isNotEmpty;
+    final isExpanded = _expandedTasks.contains(todo.id);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DragTarget<TodoItem>(
+          onWillAccept: (dragged) {
+            if (dragged == null) return false;
+            if (dragged.id == todo.id) return false;
+            if (_isDescendant(dragged.id, todo.id)) return false;
+
+            final newLevel = todo.level + 1;
+            final deepestDragged = _getDeepestLevel(dragged.id);
+            final relativeDepth = deepestDragged - dragged.level;
+            final willFit = newLevel + relativeDepth <= 3;
+
+            return todo.canHaveSubTasks && willFit;
+          },
+          onAccept: (dragged) {
+            _moveTaskToParent(dragged.id, todo.id);
+            setState(() {
+              _expandedTasks.add(todo.id);
+            });
+          },
+          builder: (context, candidate, rejected) {
+            final card = _buildDSTaskItem(todo, enableLongPressEdit: false);
+            return LongPressDraggable<TodoItem>(
+              data: todo,
+              feedback: _buildDragFeedback(todo),
+              childWhenDragging: Opacity(opacity: 0.5, child: card),
+              child: Container(
+                margin: EdgeInsets.only(left: 32.0 * todo.level),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: candidate.isNotEmpty
+                      ? Border.all(
+                          color: Theme.of(context).colorScheme.secondary,
+                          width: 2,
+                        )
+                      : null,
+                ),
+                child: card,
+              ),
+            );
+          },
+        ),
+        if (isExpanded && hasSubTasks)
+          ..._getVisibleSubTasks(todo.id).map((subTask) => _buildDraggableTaskRow(subTask)),
+      ],
+    );
+  }
+
+  Widget _buildRootDropZone() {
+    return DragTarget<TodoItem>(
+      onWillAccept: (dragged) {
+        if (dragged == null) return false;
+        return dragged.parentId != null; // seulement si la tâche est déjà une sous-tâche
+      },
+      onAccept: (dragged) => _moveTaskToRoot(dragged.id),
+      builder: (context, candidate, rejected) {
+        final isActive = candidate.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          height: isActive ? 32 : 12,
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          decoration: BoxDecoration(
+            color: isActive
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: isActive
+                ? Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  )
+                : null,
+          ),
+          child: isActive
+              ? Center(
+                  child: Text(
+                    'Déposer ici pour remonter au niveau principal',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                )
+              : null,
+        );
+      },
+    );
+  }
+
   Widget _buildListView() {
     if (_filteredTodos.isEmpty) {
       return Center(child: Builder(
@@ -3074,18 +3149,16 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
       itemCount: _filteredTodos.length,
       itemBuilder: (context, index) {
         final todo = _filteredTodos[index];
+        final children = <Widget>[
+          _buildRootDropZone(),
+          _buildDraggableTaskRow(todo),
+        ];
+        if (index == _filteredTodos.length - 1) {
+          children.add(_buildRootDropZone());
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildDSTaskItem(todo),
-            if (_expandedTasks.contains(todo.id))
-              ..._getVisibleSubTasks(todo.id).map((subTask) => 
-                Padding(
-                  padding: const EdgeInsets.only(left: 32),
-                  child: _buildDSTaskItem(subTask),
-                ),
-              ),
-          ],
+          children: children,
         );
       },
     );
@@ -3303,7 +3376,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     ).then(_handleTodoResult);
   }
 
-  Widget _buildDSTaskItem(TodoItem todo) {
+  Widget _buildDSTaskItem(TodoItem todo, {bool enableLongPressEdit = true}) {
     // Determine status
     Widget statusWidget;
     if (todo.isCompleted) {
@@ -3341,7 +3414,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
           _editTodo(todo);
         }
       },
-      onLongPress: () => _editTodo(todo), // Long press pour éditer même avec sous-tâches
+      onLongPress: enableLongPressEdit ? () => _editTodo(todo) : null,
       child: DSTaskCard(
         categoryIcon: project.icon,
         categoryColor: project.color,
@@ -4954,11 +5027,6 @@ class _EditTodoModalState extends State<EditTodoModal> {
     
     // Sauvegarder automatiquement les modifications avant de fermer
     _saveChanges();
-    
-    // Forcer un rafraîchissement complet de la vue
-    widget.homeState.setState(() {
-      debugPrint('🔄 [EditTodoModal] setState() appelé dans dispose() pour rafraîchir la vue');
-    });
     
     debugPrint('🔄 [EditTodoModal] Nettoyage des contrôleurs...');
     _titleController.dispose();
