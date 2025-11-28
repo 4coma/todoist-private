@@ -1,6 +1,7 @@
 import '../models/todo_item.dart';
 import 'local_storage_service.dart';
 import 'package:flutter/foundation.dart';
+import 'firebase_sync_service.dart';
 
 class TodoService {
   static final TodoService _instance = TodoService._internal();
@@ -8,6 +9,7 @@ class TodoService {
   TodoService._internal();
 
   final LocalStorageService _storage = LocalStorageService();
+  final FirebaseSyncService _firebaseSync = FirebaseSyncService();
 
   // Getters pour accéder aux données
   List<TodoItem> get todos => _storage.todos;
@@ -26,6 +28,12 @@ class TodoService {
     debugPrint('🟢 [TodoService] addTodo: $todo');
     final result = await _storage.addTodo(todo);
     debugPrint('🟢 [TodoService] addTodo: done, total todos: ${_storage.todos.length}');
+    
+    // Synchroniser avec Firebase en arrière-plan
+    _firebaseSync.syncTodo(result).catchError((e) {
+      debugPrint('⚠️ [TodoService] Erreur lors de la synchronisation Firebase: $e');
+    });
+    
     return result;
   }
 
@@ -34,6 +42,14 @@ class TodoService {
     debugPrint('🟡 [TodoService] updateTodo: id=$id, updates=$updates');
     final result = await _storage.updateTodo(id, updates);
     debugPrint('🟡 [TodoService] updateTodo: done, total todos: ${_storage.todos.length}');
+    
+    // Synchroniser avec Firebase en arrière-plan
+    if (result != null) {
+      _firebaseSync.syncTodo(result).catchError((e) {
+        debugPrint('⚠️ [TodoService] Erreur lors de la synchronisation Firebase: $e');
+      });
+    }
+    
     return result;
   }
 
@@ -42,6 +58,14 @@ class TodoService {
     debugPrint('🔴 [TodoService] deleteTodo: id=$id');
     final result = await _storage.deleteTodo(id);
     debugPrint('🔴 [TodoService] deleteTodo: done, total todos: ${_storage.todos.length}');
+    
+    // Synchroniser avec Firebase en arrière-plan
+    if (result) {
+      _firebaseSync.deleteTodoFromFirebase(id).catchError((e) {
+        debugPrint('⚠️ [TodoService] Erreur lors de la synchronisation Firebase: $e');
+      });
+    }
+    
     return result;
   }
 

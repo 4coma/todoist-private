@@ -80,6 +80,16 @@ dependencies:
   
   # Localisation pour les date pickers
   intl: ^0.20.0
+  
+  # === DÉPENDANCES FIREBASE ===
+  
+  # Firebase Core
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+  
+  # Gestion de la connectivité pour la synchronisation
+  connectivity_plus: ^6.0.5
 
 dev_dependencies:
   flutter_test:

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'local_storage_service.dart';
 
 class PreferencesService {
@@ -22,6 +23,10 @@ class PreferencesService {
   // Définir une préférence
   Future<void> setPreference<T>(String key, T value) async {
     await _storage.setPreference(key, value);
+    
+    // Note: La synchronisation Firebase est gérée par FirebaseSyncService
+    // pour éviter les dépendances circulaires. La sync se fera automatiquement
+    // via la synchronisation périodique ou lors des changements détectés.
   }
 
   // Supprimer une préférence

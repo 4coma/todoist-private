@@ -29,15 +29,24 @@ class DataExportImportService {
   Future<void> importAllData(Map<String, dynamic> data) async {
     try {
       print('🔄 DataExportImportService: Début de l\'import des données...');
+      print('📋 Structure des données reçues: ${data.keys.toList()}');
+      print('📋 Type de données: ${data.runtimeType}');
       
-      // Vérifier la version
+      // Vérifier que c'est bien un Map
+      if (data.isEmpty) {
+        throw Exception('Le fichier est vide ou invalide');
+      }
+      
+      // Vérifier la version (plus flexible)
       final version = data['version'] as String?;
-      if (version == null || !version.startsWith('1.0')) {
-        throw Exception('Version de données non supportée: $version');
+      if (version != null && !version.startsWith('1.0')) {
+        print('⚠️ Version de données: $version (tentative d\'import quand même)');
       }
 
       // Vider d'abord toutes les données existantes (sauf le projet par défaut)
+      print('🗑️ Suppression des données existantes...');
       await clearAllData();
+      print('✅ Données existantes supprimées');
 
       // Créer un mapping des anciens IDs vers les nouveaux IDs pour éviter les conflits
       Map<int, int> projectIdMapping = {};
@@ -50,14 +59,24 @@ class DataExportImportService {
         
         for (final projectJson in projectsList) {
           try {
-            final originalProject = Project.fromJson(projectJson as Map<String, dynamic>);
+            final projectMap = projectJson as Map<String, dynamic>;
+            Project originalProject;
+            
+            // Essayer d'abord avec fromJson (nouveau format)
+            try {
+              originalProject = Project.fromJson(projectMap);
+            } catch (e) {
+              // Si ça échoue, essayer avec fromMap (ancien format)
+              print('   ⚠️ Tentative avec fromMap (ancien format)');
+              originalProject = Project.fromMap(projectMap);
+            }
             
             // Créer un nouveau projet avec un ID unique
             final newProject = Project(
               id: DateTime.now().millisecondsSinceEpoch + projectsList.indexOf(projectJson),
               name: originalProject.name,
               color: originalProject.color,
-
+              icon: originalProject.icon,
               createdAt: originalProject.createdAt,
               updatedAt: originalProject.updatedAt,
             );
@@ -67,9 +86,12 @@ class DataExportImportService {
             
             await _projectService.addProject(newProject);
             print('   ✅ Projet importé: "${newProject.name}" (ID: ${originalProject.id} -> ${newProject.id})');
-          } catch (e) {
+          } catch (e, stackTrace) {
             print('   ❌ Erreur lors de l\'import d\'un projet: $e');
-            throw Exception('Erreur lors de l\'import du projet: $e');
+            print('   📋 Stack trace: $stackTrace');
+            print('   📋 Données du projet: $projectJson');
+            // Ne pas faire échouer tout l'import pour un seul projet
+            print('   ⚠️ Projet ignoré, continuation...');
           }
         }
       }
@@ -81,7 +103,17 @@ class DataExportImportService {
         
         for (final todoJson in todosList) {
           try {
-            final originalTodo = TodoItem.fromJson(todoJson as Map<String, dynamic>);
+            final todoMap = todoJson as Map<String, dynamic>;
+            TodoItem originalTodo;
+            
+            // Essayer d'abord avec fromJson (nouveau format)
+            try {
+              originalTodo = TodoItem.fromJson(todoMap);
+            } catch (e) {
+              // Si ça échoue, essayer avec fromMap (ancien format)
+              print('   ⚠️ Tentative avec fromMap (ancien format) pour une tâche');
+              originalTodo = TodoItem.fromMap(todoMap);
+            }
             
             // Créer une nouvelle tâche avec un ID unique
             final newTodo = TodoItem(
@@ -101,18 +133,29 @@ class DataExportImportService {
               elapsedSeconds: originalTodo.elapsedSeconds,
               createdAt: originalTodo.createdAt,
               updatedAt: originalTodo.updatedAt,
+              recurrenceType: originalTodo.recurrenceType,
+              recurrenceDayOfWeek: originalTodo.recurrenceDayOfWeek,
+              recurrenceDayOfMonth: originalTodo.recurrenceDayOfMonth,
+              recurrenceTime: originalTodo.recurrenceTime,
+              isWeeklyPriority: originalTodo.isWeeklyPriority,
             );
             
             // Sauvegarder le mapping d'ID
             todoIdMapping[originalTodo.id] = newTodo.id;
             
             await _todoService.addTodo(newTodo);
-            print('   ✅ Tâche importée: "${newTodo.title}" (ID: ${originalTodo.id} -> ${newTodo.id})');
-          } catch (e) {
+            if (todosList.indexOf(todoJson) % 10 == 0) {
+              print('   📊 ${todosList.indexOf(todoJson) + 1}/${todosList.length} tâches importées...');
+            }
+          } catch (e, stackTrace) {
             print('   ❌ Erreur lors de l\'import d\'une tâche: $e');
-            throw Exception('Erreur lors de l\'import de la tâche: $e');
+            print('   📋 Stack trace: $stackTrace');
+            print('   📋 Données de la tâche: ${todoJson.toString().substring(0, 100)}...');
+            // Ne pas faire échouer tout l'import pour une seule tâche
+            print('   ⚠️ Tâche ignorée, continuation...');
           }
         }
+        print('   ✅ Import des tâches terminé');
       }
 
       // Mettre à jour les parentId des tâches avec les nouveaux IDs
@@ -128,18 +171,29 @@ class DataExportImportService {
 
       // Importer les préférences
       if (data['preferences'] != null) {
-        final prefs = data['preferences'] as Map<String, dynamic>;
-        print('📝 DataExportImportService: Import de ${prefs.length} préférences...');
-        
-        for (final entry in prefs.entries) {
-          try {
-            await _preferencesService.setPreference(entry.key, entry.value);
-            print('   ✅ Préférence importée: "${entry.key}"');
-          } catch (e) {
-            print('   ❌ Erreur lors de l\'import d\'une préférence: $e');
-            // Ne pas faire échouer l'import pour les préférences
+        try {
+          final prefs = data['preferences'];
+          if (prefs is Map) {
+            final prefsMap = prefs as Map<String, dynamic>;
+            print('📝 DataExportImportService: Import de ${prefsMap.length} préférences...');
+            
+            for (final entry in prefsMap.entries) {
+              try {
+                await _preferencesService.setPreference(entry.key, entry.value);
+                print('   ✅ Préférence importée: "${entry.key}"');
+              } catch (e) {
+                print('   ❌ Erreur lors de l\'import d\'une préférence: $e');
+                // Ne pas faire échouer l'import pour les préférences
+              }
+            }
+          } else {
+            print('⚠️ Les préférences ne sont pas dans le bon format (attendu: Map, reçu: ${prefs.runtimeType})');
           }
+        } catch (e) {
+          print('⚠️ Erreur lors de l\'import des préférences: $e (continuation...)');
         }
+      } else {
+        print('ℹ️ Aucune préférence à importer');
       }
 
       print('✅ DataExportImportService: Import terminé avec succès');
@@ -161,8 +215,10 @@ class DataExportImportService {
       print('   - Tâches: ${stats['todos']}');
       print('   - Tâches complétées: ${stats['completed_todos']}');
       print('   - Tâches en attente: ${stats['pending_todos']}');
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ DataExportImportService: Erreur lors de l\'import: $e');
+      print('❌ Stack trace: $stackTrace');
+      print('❌ Type d\'erreur: ${e.runtimeType}');
       rethrow;
     }
   }

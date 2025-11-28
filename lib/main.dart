@@ -24,9 +24,26 @@ import 'screens/design_system_demo.dart';
 import 'design_system/tokens.dart';
 import 'design_system/widgets.dart';
 import 'design_system/forms.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'services/firebase_auth_service.dart';
+import 'services/firebase_sync_service.dart';
+import 'services/firebase_migration_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialiser Firebase
+  try {
+    print('🔄 Tentative d\'initialisation Firebase...');
+    await Firebase.initializeApp();
+    print('✅ Firebase initialisé avec succès');
+    debugPrint('✅ Firebase initialisé');
+  } catch (e, stackTrace) {
+    print('❌ ERREUR Firebase: $e');
+    print('❌ Stack trace: $stackTrace');
+    debugPrint('⚠️ Firebase non initialisé (configuration manquante?): $e');
+    // L'application peut continuer sans Firebase si non configuré
+  }
   
   // Initialiser le service de stockage local
   final localStorageService = LocalStorageService();
@@ -34,6 +51,70 @@ void main() async {
   
   // Initialiser le service de notifications
   await NotificationService.initialize();
+  
+  // Initialiser Firebase Sync si un utilisateur est connecté
+  try {
+    final authService = FirebaseAuthService();
+    
+    // Test d'authentification anonyme (pour tester la synchronisation)
+    if (!authService.isAuthenticated) {
+      try {
+        print('🔄 Tentative d\'authentification anonyme...');
+        await authService.signInAnonymously();
+        final userId = authService.currentUserId;
+        print('✅ Authentifié anonymement avec succès');
+        print('   👤 User ID: $userId');
+        print('   📍 Chemin Firestore: users/$userId/');
+        debugPrint('✅ Authentifié anonymement');
+      } catch (e, stackTrace) {
+        print('❌ ERREUR authentification anonyme: $e');
+        print('❌ Stack trace: $stackTrace');
+        debugPrint('⚠️ Erreur lors de l\'authentification anonyme: $e');
+      }
+    }
+    
+    if (authService.isAuthenticated) {
+      print('🔄 Initialisation de la synchronisation Firebase...');
+      final syncService = FirebaseSyncService();
+      await syncService.initialize();
+      print('✅ Firebase Sync initialisé avec succès');
+      debugPrint('✅ Firebase Sync initialisé pour l\'utilisateur connecté');
+      
+      // Vérifier et effectuer la migration si nécessaire
+      final migrationService = FirebaseMigrationService();
+      if (!await migrationService.hasMigrated() && migrationService.hasDataToMigrate()) {
+        print('🔄 Données locales détectées, migration automatique...');
+        debugPrint('🔄 Données locales détectées, migration automatique...');
+        try {
+          await migrationService.migrateAllData();
+          print('✅ Migration terminée avec succès');
+        } catch (e, stackTrace) {
+          print('❌ ERREUR migration: $e');
+          print('❌ Stack trace: $stackTrace');
+          debugPrint('⚠️ Erreur lors de la migration automatique: $e');
+        }
+      } else {
+        print('ℹ️ Aucune migration nécessaire (déjà migré ou pas de données)');
+        
+        // Forcer la synchronisation de toutes les tâches existantes (pour réparer)
+        // TODO: Retirer ce code après vérification
+        try {
+          print('🔄 Synchronisation forcée de toutes les tâches existantes...');
+          await migrationService.forceSyncAllTodos();
+          print('✅ Synchronisation forcée terminée');
+        } catch (e) {
+          print('⚠️ Erreur lors de la synchronisation forcée: $e');
+        }
+      }
+    } else {
+      print('⚠️ Aucun utilisateur authentifié, synchronisation Firebase désactivée');
+    }
+  } catch (e, stackTrace) {
+    print('❌ ERREUR générale Firebase Sync: $e');
+    print('❌ Stack trace: $stackTrace');
+    debugPrint('⚠️ Erreur lors de l\'initialisation Firebase Sync: $e');
+    // L'application peut continuer sans synchronisation Firebase
+  }
   
   // Demander les permissions de notification explicitement
   try {
@@ -493,11 +574,30 @@ class _TodoHomePageState extends State<TodoHomePage> {
     try {
       debugPrint('🔄 _rescheduleNotifications(): Début de la reprogrammation...');
       
-      // Annuler toutes les notifications existantes
-      await NotificationService.cancelAllReminders();
-      debugPrint('🔄 _rescheduleNotifications(): Anciennes notifications annulées');
+      // Ne PAS annuler toutes les notifications - cela supprime même celles déjà affichées
+      // Au lieu de cela, on annule uniquement les notifications pour les tâches qui n'ont plus besoin de rappel
+      int cancelledCount = 0;
+      for (final todo in _todos) {
+        // Annuler la notification si :
+        // - La tâche est terminée
+        // - La tâche n'a plus de rappel
+        // - Le rappel est dans le passé
+        if (todo.isCompleted || 
+            todo.reminder == null || 
+            (todo.reminder != null && todo.reminder!.isBefore(DateTime.now()))) {
+          try {
+            await NotificationService.cancelTaskNotification(todo.id);
+            cancelledCount++;
+            debugPrint('🔄 _rescheduleNotifications(): Notification annulée pour tâche ${todo.id} (terminée/sans rappel/rappel passé)');
+          } catch (e) {
+            debugPrint('❌ _rescheduleNotifications(): Erreur lors de l\'annulation pour tâche ${todo.id}: $e');
+          }
+        }
+      }
+      debugPrint('🔄 _rescheduleNotifications(): $cancelledCount notifications annulées (tâches terminées/sans rappel)');
       
-      // Reprogrammer les notifications pour les tâches avec rappel
+      // Programmer les notifications pour les tâches avec rappel valide
+      // awesome_notifications gère automatiquement les doublons si on utilise le même ID
       int scheduledCount = 0;
       for (final todo in _todos) {
         if (todo.reminder != null && todo.reminder!.isAfter(DateTime.now()) && !todo.isCompleted) {
@@ -516,7 +616,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
         }
       }
       
-      debugPrint('✅ _rescheduleNotifications(): $scheduledCount notifications reprogrammées avec succès');
+      debugPrint('✅ _rescheduleNotifications(): $scheduledCount notifications programmées avec succès');
     } catch (e) {
       debugPrint('❌ _rescheduleNotifications(): Erreur lors de la reprogrammation des rappels: $e');
     }
@@ -5890,74 +5990,179 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 backgroundColor: DSColor.getSurfaceTint(brightness),
                                 textColor: DSColor.primary,
                                 onPressed: () async {
+                                  BuildContext? dialogContext;
                                   try {
+                                    debugPrint('🔄 Début de la restauration...');
+                                    
                                     // Afficher un indicateur de chargement
                                     showDialog(
                                       context: context,
                                       barrierDismissible: false,
-                                      builder: (context) => const Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
+                                      builder: (context) {
+                                        dialogContext = context;
+                                        return const Center(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              CircularProgressIndicator(),
+                                              SizedBox(height: 16),
+                                              Text('Chargement du fichier...'),
+                                            ],
+                                          ),
+                                        );
+                                      },
                                     );
 
+                                    debugPrint('📂 Sélection du fichier...');
                                     final fileService = FileService();
                                     final data = await fileService.loadDataFromFile();
                                     
-                                    // Fermer l'indicateur de chargement
-                                    Navigator.of(context).pop();
+                                    // Mettre à jour le dialog
+                                    if (dialogContext != null && Navigator.canPop(dialogContext!)) {
+                                      Navigator.of(dialogContext!).pop();
+                                    }
                                     
-                                    if (data != null) {
+                                    if (data == null) {
+                                      debugPrint('⚠️ Aucun fichier sélectionné');
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Import annulé - Aucun fichier sélectionné'),
+                                          backgroundColor: Colors.orange,
+                                        ),
+                                      );
+                                      return;
+                                    }
+
+                                    debugPrint('✅ Fichier chargé: ${data.keys.length} clés trouvées');
+                                    
+                                    // Afficher un nouveau dialog pour l'import
+                                    showDialog(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (context) {
+                                        dialogContext = context;
+                                        return const Center(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              CircularProgressIndicator(),
+                                              SizedBox(height: 16),
+                                              Text('Import des données...'),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    );
+
+                                    try {
                                       // Vérifier que le fichier est valide
+                                      debugPrint('🔍 Validation du fichier...');
                                       if (!fileService.isValidBackupFile(data)) {
+                                        if (dialogContext != null && Navigator.canPop(dialogContext!)) {
+                                          Navigator.of(dialogContext!).pop();
+                                        }
+                                        debugPrint('❌ Fichier invalide. Clés: ${data.keys.toList()}');
                                         ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('Fichier invalide. Format de sauvegarde non reconnu.'),
+                                          SnackBar(
+                                            content: Text('Fichier invalide.\\nClés trouvées: ${data.keys.take(5).join(", ")}...'),
                                             backgroundColor: Colors.red,
+                                            duration: const Duration(seconds: 5),
                                           ),
                                         );
                                         return;
                                       }
 
+                                      debugPrint('✅ Fichier valide, début de l\'import...');
                                       final exportService = DataExportImportService();
                                       await exportService.importAllData(data);
                                       
-                                      debugPrint('✅ Import réussi depuis fichier');
+                                      debugPrint('✅ Import terminé avec succès');
                                       
-                                      // Forcer le rechargement des données dans main.dart
+                                      // Fermer le dialog
+                                      if (dialogContext != null && Navigator.canPop(dialogContext!)) {
+                                        Navigator.of(dialogContext!).pop();
+                                      }
+                                      
+                                      // Forcer le rechargement des données
+                                      debugPrint('🔄 Rechargement des données...');
                                       final localStorageService = LocalStorageService();
                                       await localStorageService.reloadData();
                                       
                                       // Recharger les données dans l'interface
                                       widget.onDataReload();
                                       
+                                      debugPrint('✅ Données rechargées');
+                                      
+                                      // Afficher un message de succès avec les statistiques
+                                      final stats = localStorageService.getDataStats();
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Restauration réussie !\\nDonnées importées avec succès'),
+                                        SnackBar(
+                                          content: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              const Row(
+                                                children: [
+                                                  Icon(Icons.check_circle, color: Colors.white, size: 20),
+                                                  SizedBox(width: 8),
+                                                  Text(
+                                                    'Restauration réussie !',
+                                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                '${stats['todos']} tâches • ${stats['projects']} projets importés',
+                                                style: const TextStyle(fontSize: 14),
+                                              ),
+                                            ],
+                                          ),
                                           backgroundColor: Colors.green,
-                                          duration: const Duration(seconds: 4),
+                                          duration: const Duration(seconds: 5),
+                                          behavior: SnackBarBehavior.floating,
                                         ),
                                       );
                                       
                                       // Rafraîchir l'interface
                                       widget.onSettingsChanged();
-                                    } else {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Import annulé'),
-                                          backgroundColor: Colors.orange,
-                                        ),
-                                      );
+                                    } catch (e, stackTrace) {
+                                      debugPrint('❌ Erreur lors de l\'import: $e');
+                                      debugPrint('❌ Type: ${e.runtimeType}');
+                                      debugPrint('❌ Stack trace: $stackTrace');
+                                      
+                                      // Fermer le dialog
+                                      if (dialogContext != null && Navigator.canPop(dialogContext!)) {
+                                        Navigator.of(dialogContext!).pop();
+                                      }
+                                      
+                                        final errorMessage = e.toString();
+                                        final displayMessage = errorMessage.length > 100 
+                                            ? '${errorMessage.substring(0, 100)}...' 
+                                            : errorMessage;
+                                        
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text('❌ Erreur lors de la restauration:\\n$displayMessage'),
+                                            backgroundColor: Colors.red,
+                                            duration: const Duration(seconds: 8),
+                                          ),
+                                        );
                                     }
-                                  } catch (e) {
-                                    // Fermer l'indicateur de chargement en cas d'erreur
-                                    if (Navigator.canPop(context)) {
-                                      Navigator.of(context).pop();
+                                  } catch (e, stackTrace) {
+                                    debugPrint('❌ Erreur générale lors de la restauration: $e');
+                                    debugPrint('❌ Stack trace: $stackTrace');
+                                    
+                                    // Fermer le dialog si ouvert
+                                    if (dialogContext != null && Navigator.canPop(dialogContext!)) {
+                                      Navigator.of(dialogContext!).pop();
                                     }
-                                    debugPrint('❌ Erreur import: \\${e}');
+                                    
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Erreur lors de la restauration: \\${e}'),
+                                        content: Text('❌ Erreur: ${e.toString()}'),
                                         backgroundColor: Colors.red,
+                                        duration: const Duration(seconds: 6),
                                       ),
                                     );
                                   }

@@ -115,9 +115,24 @@ class FileService {
 
   /// Vérifie si un fichier est un fichier de sauvegarde valide
   bool isValidBackupFile(Map<String, dynamic> data) {
-    // Vérifier que le fichier contient les clés attendues
-    final requiredKeys = ['todos', 'projects', 'preferences'];
-    return requiredKeys.every((key) => data.containsKey(key));
+    // Vérifier que le fichier contient au moins une des clés attendues
+    // Plus flexible pour accepter différents formats
+    final possibleKeys = ['todos', 'projects', 'preferences', 'version', 'exportDate'];
+    final hasAtLeastOneKey = possibleKeys.any((key) => data.containsKey(key));
+    
+    // Vérifier aussi que c'est bien un Map (pas null, pas une liste, etc.)
+    if (!hasAtLeastOneKey) {
+      debugPrint('⚠️ Fichier invalide: aucune clé attendue trouvée. Clés présentes: ${data.keys.toList()}');
+      return false;
+    }
+    
+    // Si on a 'todos' ou 'projects', c'est probablement un fichier valide
+    if (data.containsKey('todos') || data.containsKey('projects')) {
+      return true;
+    }
+    
+    // Sinon, on accepte si on a au moins 'preferences' ou 'version'
+    return data.containsKey('preferences') || data.containsKey('version');
   }
 
   /// Formate la taille d'un fichier

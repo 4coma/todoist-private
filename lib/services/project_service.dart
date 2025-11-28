@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/project.dart';
 
 import 'local_storage_service.dart';
+import 'firebase_sync_service.dart';
 
 class ProjectService {
   static final ProjectService _instance = ProjectService._internal();
@@ -9,6 +10,7 @@ class ProjectService {
   ProjectService._internal();
 
   final LocalStorageService _storage = LocalStorageService();
+  final FirebaseSyncService _firebaseSync = FirebaseSyncService();
 
   // Getters pour accéder aux données
   List<Project> get projects => _storage.projects;
@@ -22,17 +24,42 @@ class ProjectService {
 
   // Ajouter un projet
   Future<Project> addProject(Project project) async {
-    return await _storage.addProject(project);
+    final result = await _storage.addProject(project);
+    
+    // Synchroniser avec Firebase en arrière-plan
+    _firebaseSync.syncProject(result).catchError((e) {
+      debugPrint('⚠️ [ProjectService] Erreur lors de la synchronisation Firebase: $e');
+    });
+    
+    return result;
   }
 
   // Mettre à jour un projet
   Future<Project?> updateProject(int id, Map<String, dynamic> updates) async {
-    return await _storage.updateProject(id, updates);
+    final result = await _storage.updateProject(id, updates);
+    
+    // Synchroniser avec Firebase en arrière-plan
+    if (result != null) {
+      _firebaseSync.syncProject(result).catchError((e) {
+        debugPrint('⚠️ [ProjectService] Erreur lors de la synchronisation Firebase: $e');
+      });
+    }
+    
+    return result;
   }
 
   // Supprimer un projet
   Future<bool> deleteProject(int id) async {
-    return await _storage.deleteProject(id);
+    final result = await _storage.deleteProject(id);
+    
+    // Synchroniser avec Firebase en arrière-plan
+    if (result) {
+      _firebaseSync.deleteProjectFromFirebase(id).catchError((e) {
+        debugPrint('⚠️ [ProjectService] Erreur lors de la synchronisation Firebase: $e');
+      });
+    }
+    
+    return result;
   }
 
   // Obtenir un projet par ID

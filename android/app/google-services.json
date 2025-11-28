@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "945843082014",
+    "project_id": "todoom-a0f98",
+    "storage_bucket": "todoom-a0f98.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:945843082014:android:fabed09855edcbbab1ef0f",
+        "android_client_info": {
+          "package_name": "com.todoom.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAGNOJixeulTA2S-d1xLrGO4pgp8WESPro"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
