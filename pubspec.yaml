@@ -80,7 +80,7 @@ dependencies:
   
   # Localisation pour les date pickers
   intl: ^0.20.0
-  
+
   # === DÉPENDANCES FIREBASE ===
   
   # Firebase Core

@@ -134,3 +134,4 @@ Une fois la synchronisation vérifiée :
 3. ✅ Vérifier le mode offline
 
 
+

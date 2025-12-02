@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todo App - Gestion de tâches moderne et intuitive</title>
+    <meta name="description" content="Une application de gestion de tâches intuitive avec suivi du temps, rappels, projets et synchronisation cloud. Alternative à Todoist, respectueuse de la vie privée.">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #7C5CFF;
+            --primary-dark: #5E3BFF;
+            --accent: #6F7DFB;
+            --success: #22C55E;
+            --surface: #FFFFFF;
+            --surface-soft: #F7F7FB;
+            --surface-tint: #EDEBFF;
+            --heading: #1E2340;
+            --body: #4A4E69;
+            --muted: #8C8FA1;
+            --shadow: rgba(124, 92, 255, 0.1);
+            --shadow-lg: rgba(124, 92, 255, 0.2);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: var(--body);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Header */
+        header {
+            background: var(--surface);
+            box-shadow: 0 2px 20px var(--shadow);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            padding: 1rem 2rem;
+        }
+
+        nav {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo::before {
+            content: "✓";
+            background: var(--primary);
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--body);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: var(--primary);
+        }
+
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, var(--surface-tint) 0%, var(--surface-soft) 100%);
+            padding: 6rem 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
+            opacity: 0.1;
+            border-radius: 50%;
+        }
+
+        .hero-content {
+            max-width: 800px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: var(--heading);
+            margin-bottom: 1rem;
+            line-height: 1.2;
+        }
+
+        .hero .subtitle {
+            font-size: 1.5rem;
+            color: var(--body);
+            margin-bottom: 2rem;
+            font-weight: 400;
+        }
+
+        .hero .description {
+            font-size: 1.1rem;
+            color: var(--muted);
+            margin-bottom: 3rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 1rem 2rem;
+            border-radius: 12px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s;
+            display: inline-block;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 20px var(--shadow-lg);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px var(--shadow-lg);
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--primary);
+            border: 2px solid var(--primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface-tint);
+        }
+
+        /* Stats Section */
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 4rem;
+            margin: 4rem 0;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 3rem;
+            font-weight: 800;
+            color: var(--primary);
+            display: block;
+        }
+
+        .stat-label {
+            color: var(--muted);
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        /* Features Section */
+        .features {
+            padding: 6rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--heading);
+            margin-bottom: 1rem;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            color: var(--muted);
+            font-size: 1.1rem;
+            margin-bottom: 4rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .feature-card {
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 4px 20px var(--shadow);
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 30px var(--shadow-lg);
+        }
+
+
+        .feature-card h3 {
+            font-size: 1.5rem;
+            color: var(--heading);
+            margin-bottom: 1rem;
+        }
+
+        .feature-card p {
+            color: var(--body);
+            line-height: 1.8;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin-top: 1rem;
+        }
+
+        .feature-list li {
+            padding: 0.5rem 0;
+            color: var(--body);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .feature-list li::before {
+            content: "✓";
+            color: var(--success);
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        /* Screenshots Section */
+        .screenshots {
+            padding: 6rem 2rem;
+            background: var(--surface-soft);
+        }
+
+        .screenshots-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .screenshots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .screenshot-card {
+            background: var(--surface);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px var(--shadow);
+            transition: all 0.3s;
+        }
+
+        .screenshot-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 30px var(--shadow-lg);
+        }
+
+        .screenshot-card img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .screenshot-card .caption {
+            padding: 1.5rem;
+            text-align: center;
+            font-weight: 600;
+            color: var(--heading);
+        }
+
+        /* CTA Section */
+        .cta-section {
+            padding: 6rem 2rem;
+            text-align: center;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            color: white;
+        }
+
+        .cta-section h2 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .cta-section p {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            opacity: 0.9;
+        }
+
+        .cta-section .btn {
+            background: white;
+            color: var(--primary);
+        }
+
+        .cta-section .btn:hover {
+            background: var(--surface-soft);
+        }
+
+        /* Footer */
+        footer {
+            background: var(--heading);
+            color: var(--muted);
+            padding: 3rem 2rem;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 2rem;
+        }
+
+        .footer-section h4 {
+            color: white;
+            margin-bottom: 1rem;
+        }
+
+        .footer-section a {
+            color: var(--muted);
+            text-decoration: none;
+            display: block;
+            margin-bottom: 0.5rem;
+            transition: color 0.3s;
+        }
+
+        .footer-section a:hover {
+            color: white;
+        }
+
+        .footer-bottom a {
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .footer-bottom a:hover {
+            color: white;
+        }
+
+        .footer-bottom {
+            text-align: center;
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .hero .subtitle {
+                font-size: 1.2rem;
+            }
+
+            .nav-links {
+                display: none;
+            }
+
+            .stats {
+                gap: 2rem;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">Todo App</div>
+            <ul class="nav-links">
+                <li><a href="#features">Fonctionnalités</a></li>
+                <li><a href="#screenshots">Captures</a></li>
+                <li><a href="#download">Télécharger</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <section class="hero">
+        <div class="hero-content">
+            <h1>App de gestion des tâches via vocal et vie privée protégée</h1>
+            <p class="subtitle">Gestion de tâches avec ajout vocal<br>et synchronisation sécurisée</p>
+            <p class="description">
+                Application de gestion de tâches avec ajout vocal intelligent, synchronisation cloud, suivi du temps et respect de la vie privée.
+            </p>
+            <div class="cta-buttons">
+                <a href="#download" class="btn btn-primary">Télécharger l'app</a>
+                <a href="#features" class="btn btn-secondary">Découvrir les fonctionnalités</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="stats">
+        <div class="stat">
+            <span class="stat-number">100%</span>
+            <span class="stat-label">Personnalisé</span>
+        </div>
+        <div class="stat">
+            <span class="stat-number">∞</span>
+            <span class="stat-label">Tâches illimitées</span>
+        </div>
+        <div class="stat">
+            <span class="stat-number">Cloud</span>
+            <span class="stat-label">Synchronisation</span>
+        </div>
+    </section>
+
+    <section class="features" id="features">
+        <h2 class="section-title">Fonctionnalités principales</h2>
+        <p class="section-subtitle">Les fonctionnalités disponibles dans l'application</p>
+
+        <div class="features-grid">
+            <div class="feature-card">
+                <h3>Ajout vocal intelligent</h3>
+                <p>Ajoutez des tâches par commande vocale avec extraction automatique des détails via OpenAI Whisper et GPT.</p>
+                <ul class="feature-list">
+                    <li>Transcription automatique</li>
+                    <li>Extraction de dates et rappels</li>
+                    <li>Liste de courses vocale</li>
+                    <li>Multiples tâches en une phrase</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Gestion de tâches avancée</h3>
+                <p>Créez, organisez et suivez vos tâches avec une interface intuitive et moderne.</p>
+                <ul class="feature-list">
+                    <li>Sous-tâches infinies</li>
+                    <li>Priorités personnalisables</li>
+                    <li>Dates d'échéance avec rappels</li>
+                    <li>Recherche rapide</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Système de projets</h3>
+                <p>Organisez vos tâches par projets avec des couleurs et icônes personnalisées.</p>
+                <ul class="feature-list">
+                    <li>Projets illimités</li>
+                    <li>Couleurs personnalisables</li>
+                    <li>Liste de courses spéciale</li>
+                    <li>Vue d'ensemble globale</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Suivi du temps</h3>
+                <p>Timer intégré pour chaque tâche avec suivi du temps estimé vs temps réel.</p>
+                <ul class="feature-list">
+                    <li>Timer par tâche</li>
+                    <li>Temps estimé vs réel</li>
+                    <li>Pause/reprise automatique</li>
+                    <li>Statistiques détaillées</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Notifications intelligentes</h3>
+                <p>Rappels programmables avec navigation directe vers vos tâches.</p>
+                <ul class="feature-list">
+                    <li>Rappels personnalisables</li>
+                    <li>Notifications persistantes</li>
+                    <li>Navigation directe</li>
+                    <li>Gestion des permissions</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Synchronisation cloud</h3>
+                <p>Accédez à vos tâches sur plusieurs appareils avec synchronisation automatique.</p>
+                <ul class="feature-list">
+                    <li>Synchronisation Firebase</li>
+                    <li>Multi-appareils</li>
+                    <li>Sauvegarde automatique</li>
+                    <li>Respect de la vie privée</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Personnalisation complète</h3>
+                <p>8 thèmes de couleurs, mode sombre/clair et animations fluides.</p>
+                <ul class="feature-list">
+                    <li>8 thèmes disponibles</li>
+                    <li>Mode sombre/clair</li>
+                    <li>Animations fluides</li>
+                    <li>Interface personnalisable</li>
+                </ul>
+            </div>
+
+            <div class="feature-card">
+                <h3>Export et import</h3>
+                <p>Sauvegardez et restaurez vos données facilement en format JSON.</p>
+                <ul class="feature-list">
+                    <li>Export JSON complet</li>
+                    <li>Import de sauvegarde</li>
+                    <li>Sauvegarde locale sécurisée</li>
+                    <li>Migration automatique</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section class="screenshots" id="screenshots">
+        <div class="screenshots-container">
+            <h2 class="section-title">Découvrez l'application</h2>
+            <p class="section-subtitle">Une interface moderne et intuitive pour gérer efficacement vos tâches</p>
+
+            <div class="screenshots-grid">
+                <div class="screenshot-card">
+                    <img src="screenshots/liste.png" alt="Liste des tâches">
+                    <div class="caption">Liste des tâches</div>
+                </div>
+                <div class="screenshot-card">
+                    <img src="screenshots/ajout.png" alt="Ajout de tâche">
+                    <div class="caption">Ajout de tâche</div>
+                </div>
+                <div class="screenshot-card">
+                    <img src="screenshots/modifications.png" alt="Modification de tâche">
+                    <div class="caption">Modification de tâche</div>
+                </div>
+                <div class="screenshot-card">
+                    <img src="screenshots/projets.png" alt="Gestion des projets">
+                    <div class="caption">Gestion des projets</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta-section" id="download">
+        <h2>Code source disponible</h2>
+        <p>Projet open source disponible sur GitHub</p>
+        <a href="https://github.com/4coma/todoist-private" class="btn btn-primary" style="background: white; color: var(--primary);">
+            Voir sur GitHub
+        </a>
+        <p style="margin-top: 2rem; font-size: 0.9rem; opacity: 0.8;">
+            <strong>Téléchargement direct</strong> - Installez l'APK sur votre appareil Android<br>
+            Activez "Sources inconnues" dans les paramètres de sécurité si nécessaire
+        </p>
+    </section>
+
+    <footer>
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Todo App</h4>
+                <p>Gérez vos tâches de manière intuitive et personnalisée</p>
+            </div>
+            <div class="footer-section">
+                <h4>Ressources</h4>
+                <a href="https://github.com/4coma/todoist-private">GitHub</a>
+                <a href="https://github.com/4coma/todoist-private/issues">Signaler un bug</a>
+            </div>
+            <div class="footer-section">
+                <h4>Support</h4>
+                <a href="https://github.com/4coma/todoist-private/issues">Issues GitHub</a>
+                <a href="https://github.com/4coma/todoist-private/blob/main/README.md">Documentation</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>© 2025 Todo App. <a href="https://pierrepagacz.dev">Tous droits réservés</a>.</p>
+        </div>
+    </footer>
+</body>
+</html>
+

@@ -176,16 +176,16 @@ class DataExportImportService {
           if (prefs is Map) {
             final prefsMap = prefs as Map<String, dynamic>;
             print('📝 DataExportImportService: Import de ${prefsMap.length} préférences...');
-            
+        
             for (final entry in prefsMap.entries) {
-              try {
-                await _preferencesService.setPreference(entry.key, entry.value);
-                print('   ✅ Préférence importée: "${entry.key}"');
-              } catch (e) {
-                print('   ❌ Erreur lors de l\'import d\'une préférence: $e');
-                // Ne pas faire échouer l'import pour les préférences
-              }
-            }
+          try {
+            await _preferencesService.setPreference(entry.key, entry.value);
+            print('   ✅ Préférence importée: "${entry.key}"');
+          } catch (e) {
+            print('   ❌ Erreur lors de l\'import d\'une préférence: $e');
+            // Ne pas faire échouer l'import pour les préférences
+          }
+        }
           } else {
             print('⚠️ Les préférences ne sont pas dans le bon format (attendu: Map, reçu: ${prefs.runtimeType})');
           }

@@ -44,3 +44,4 @@ Si vous ne trouvez pas "Anonymous" ou préférez utiliser Email/Password :
 Mais pour tester rapidement sans créer de compte, l'authentification anonyme est plus pratique.
 
 
+

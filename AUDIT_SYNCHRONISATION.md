@@ -296,3 +296,4 @@ Future<void> syncAll() async {
 - [ ] Gestion des erreurs avec feedback utilisateur
 - [ ] Timestamp de dernière synchronisation
 
+

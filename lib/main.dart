@@ -3109,10 +3109,10 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                           _showNoProjectTasks = false;
                           _selectedProject = null;
                           _currentView = ViewMode.list;
-                        });
-                        Navigator.pop(context);
-                      },
-                    ),
+                      });
+                      Navigator.pop(context);
+                    },
+                  ),
                   _buildDrawerItem(
                     icon: Icons.check_circle_outline,
                     label: 'Tâches achevées',
@@ -6343,8 +6343,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                               SizedBox(height: 16),
                                               Text('Chargement du fichier...'),
                                             ],
-                                          ),
-                                        );
+                                      ),
+                                    );
                                       },
                                     );
 
@@ -6476,13 +6476,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                             ? '${errorMessage.substring(0, 100)}...' 
                                             : errorMessage;
                                         
-                                        ScaffoldMessenger.of(context).showSnackBar(
+                                      ScaffoldMessenger.of(context).showSnackBar(
                                           SnackBar(
                                             content: Text('❌ Erreur lors de la restauration:\\n$displayMessage'),
                                             backgroundColor: Colors.red,
                                             duration: const Duration(seconds: 8),
-                                          ),
-                                        );
+                                        ),
+                                      );
                                     }
                                   } catch (e, stackTrace) {
                                     debugPrint('❌ Erreur générale lors de la restauration: $e');

@@ -73,3 +73,4 @@ Si vous voyez une erreur, elle sera affichée avec :
 → Vérifiez que `FirebaseSyncService` est bien initialisé au démarrage
 
 
+
