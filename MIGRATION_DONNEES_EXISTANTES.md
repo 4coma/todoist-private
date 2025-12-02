@@ -148,3 +148,4 @@ Une fois les données migrées :
 3. ✅ Vous pouvez utiliser l'app sur plusieurs appareils
 4. ✅ Les données seront sauvegardées dans le cloud
 
+

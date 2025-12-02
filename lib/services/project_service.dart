@@ -3,6 +3,7 @@ import '../models/project.dart';
 
 import 'local_storage_service.dart';
 import 'firebase_sync_service.dart';
+import 'preferences_service.dart';
 
 class ProjectService {
   static final ProjectService _instance = ProjectService._internal();
@@ -11,6 +12,10 @@ class ProjectService {
 
   final LocalStorageService _storage = LocalStorageService();
   final FirebaseSyncService _firebaseSync = FirebaseSyncService();
+  final PreferencesService _preferences = PreferencesService();
+
+  // ID constant pour le projet "courses" (liste de courses)
+  static const int SHOPPING_LIST_PROJECT_ID = -1;
 
   // Getters pour accéder aux données
   List<Project> get projects => _storage.projects;
@@ -65,6 +70,36 @@ class ProjectService {
   // Obtenir un projet par ID
   Project? getProject(int id) {
     return _storage.getProject(id);
+  }
+
+  // Obtenir ou créer le projet "courses" (liste de courses)
+  Future<Project> getOrCreateShoppingListProject() async {
+    // Vérifier si le projet existe déjà
+    final existingProject = _storage.getProject(SHOPPING_LIST_PROJECT_ID);
+    if (existingProject != null) {
+      return existingProject;
+    }
+
+    // Créer le projet "courses" s'il n'existe pas
+    final shoppingListProject = Project(
+      id: SHOPPING_LIST_PROJECT_ID,
+      name: 'Courses',
+      color: Colors.green,
+      icon: Icons.shopping_cart,
+    );
+
+    await addProject(shoppingListProject);
+    return shoppingListProject;
+  }
+
+  // Obtenir le projet "courses" (sans le créer)
+  Project? getShoppingListProject() {
+    return _storage.getProject(SHOPPING_LIST_PROJECT_ID);
+  }
+
+  // Vérifier si un projet est le projet "courses"
+  bool isShoppingListProject(int? projectId) {
+    return projectId == SHOPPING_LIST_PROJECT_ID;
   }
 
   // === MÉTHODES MÉTIER ===

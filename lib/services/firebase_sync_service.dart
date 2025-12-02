@@ -3,7 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'dart:io' show Platform;
 import '../models/todo_item.dart';
 import '../models/project.dart';
 import 'local_storage_service.dart';
@@ -30,6 +29,7 @@ class FirebaseSyncService {
   // État de synchronisation
   bool _isSyncing = false;
   bool _isInitialized = false;
+  bool _isHandlingRemoteChanges = false; // Flag pour éviter les boucles de synchronisation
   Timer? _autoSyncTimer;
 
   // Getters
@@ -196,7 +196,6 @@ class FirebaseSyncService {
     }
 
     _isSyncing = true;
-    debugPrint('🔄 FirebaseSyncService: Début de la synchronisation complète...');
 
     try {
       await Future.wait([
@@ -205,7 +204,6 @@ class FirebaseSyncService {
         syncPreferences(),
         syncTimerData(),
       ]);
-      debugPrint('✅ FirebaseSyncService: Synchronisation complète terminée');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation: $e');
     } finally {
@@ -220,9 +218,12 @@ class FirebaseSyncService {
     final userId = _authService.currentUserId;
     if (userId == null) return;
 
-    try {
-      debugPrint('🔄 FirebaseSyncService: Synchronisation des tâches...');
+    // Éviter la synchronisation si on est en train de gérer des changements distants
+    if (_isHandlingRemoteChanges) {
+      return;
+    }
 
+    try {
       // 1. Récupérer les tâches depuis Firebase
       final firestoreSnapshot = await _firestore
           .collection('users')
@@ -240,13 +241,42 @@ class FirebaseSyncService {
       // 3. Fusionner intelligemment (last-write-wins)
       final mergedTodos = _mergeTodos(localTodos, firestoreTodos);
 
-      // 4. Mettre à jour le cache local
-      await _localStorage.updateAllTodos(mergedTodos);
+      // 4. Détecter les suppressions AVANT la fusion
+      final firestoreTodoIds = firestoreTodos.map((t) => t.id).toSet();
+      final localTodoIds = localTodos.map((t) => t.id).toSet();
+      
+      // Tâches supprimées dans Firebase (existent localement mais pas dans Firebase)
+      final deletedInFirebase = localTodoIds.difference(firestoreTodoIds);
+      
+      // Tâches supprimées localement (existent dans Firebase mais pas localement)
+      final deletedLocally = firestoreTodoIds.difference(localTodoIds);
 
-      // 5. Synchroniser vers Firebase (uniquement les modifications locales)
-      await _syncTodosToFirebase(mergedTodos, firestoreTodos);
+      // 5. Supprimer les tâches qui ont été supprimées dans Firebase (sauf si modifiées localement récemment)
+      final now = DateTime.now();
+      final finalTodos = mergedTodos.where((todo) {
+        if (deletedInFirebase.contains(todo.id)) {
+          // Garder la tâche si elle a été modifiée localement récemment (dans les 5 dernières secondes)
+          final timeSinceUpdate = now.difference(todo.updatedAt);
+          return timeSinceUpdate.inSeconds < 5;
+        }
+        return true;
+      }).toList();
 
-      debugPrint('✅ FirebaseSyncService: ${mergedTodos.length} tâches synchronisées');
+      // 6. Mettre à jour le cache local
+      await _localStorage.updateAllTodos(finalTodos);
+
+      // 7. Synchroniser vers Firebase (uniquement les modifications locales)
+      await _syncTodosToFirebase(finalTodos, firestoreTodos);
+
+      // 8. Supprimer de Firebase les tâches supprimées localement
+      // (celles qui existent dans Firebase mais plus dans les données locales)
+      for (final deletedId in deletedLocally) {
+        try {
+          await deleteTodoFromFirebase(deletedId);
+        } catch (e) {
+          // Ignorer les erreurs si la tâche n'existe déjà plus dans Firebase
+        }
+      }
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation des tâches: $e');
       rethrow;
@@ -318,16 +348,56 @@ class FirebaseSyncService {
 
   /// Gérer les changements de tâches en temps réel
   void _handleTodosChanges(List<DocumentSnapshot> docs) {
+    if (_isHandlingRemoteChanges) return; // Éviter les appels récursifs
+    
     try {
+      _isHandlingRemoteChanges = true;
+      
       final todos = docs
           .map((doc) => TodoItem.fromMap(doc.data() as Map<String, dynamic>))
           .toList();
 
+      // Récupérer les tâches locales actuelles
+      final localTodos = _localStorage.todos;
+      final localTodoIds = localTodos.map((t) => t.id).toSet();
+      final firestoreTodoIds = todos.map((t) => t.id).toSet();
+
+      // Fusionner intelligemment : garder les versions locales plus récentes
+      final Map<int, TodoItem> mergedMap = {};
+      
+      // D'abord, ajouter toutes les tâches de Firebase
+      for (final todo in todos) {
+        mergedMap[todo.id] = todo;
+      }
+      
+      // Ensuite, remplacer par les versions locales si elles sont plus récentes
+      for (final localTodo in localTodos) {
+        final firestoreTodo = mergedMap[localTodo.id];
+        if (firestoreTodo == null || localTodo.updatedAt.isAfter(firestoreTodo.updatedAt)) {
+          mergedMap[localTodo.id] = localTodo;
+        }
+      }
+
+      // Supprimer les tâches qui n'existent plus dans Firebase ET qui n'ont pas été modifiées localement récemment
+      final now = DateTime.now();
+      final finalTodos = mergedMap.values.where((todo) {
+        // Garder la tâche si elle existe dans Firebase
+        if (firestoreTodoIds.contains(todo.id)) return true;
+        // Garder la tâche si elle a été modifiée localement récemment (dans les 5 dernières secondes)
+        // Cela évite de supprimer une tâche qui vient d'être créée localement
+        if (localTodoIds.contains(todo.id)) {
+          final timeSinceUpdate = now.difference(todo.updatedAt);
+          return timeSinceUpdate.inSeconds < 5;
+        }
+        return false;
+      }).toList();
+
       // Mettre à jour le cache local sans déclencher de nouvelle synchronisation
-      _localStorage.updateAllTodos(todos);
-      debugPrint('🔄 FirebaseSyncService: ${todos.length} tâches mises à jour depuis Firebase');
+      _localStorage.updateAllTodos(finalTodos);
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la mise à jour des tâches: $e');
+    } finally {
+      _isHandlingRemoteChanges = false;
     }
   }
 
@@ -335,26 +405,23 @@ class FirebaseSyncService {
   Future<void> syncTodo(TodoItem todo) async {
     final userId = _authService.currentUserId;
     if (userId == null) {
-      debugPrint('⚠️ FirebaseSyncService: Impossible de synchroniser - utilisateur non authentifié');
+      return;
+    }
+
+    // Éviter la synchronisation si on est en train de gérer des changements distants
+    if (_isHandlingRemoteChanges) {
       return;
     }
 
     try {
-      print('🔄 FirebaseSyncService: Synchronisation de la tâche "${todo.title}" (ID: ${todo.id})...');
       await _firestore
           .collection('users')
           .doc(userId)
           .collection('todos')
           .doc(todo.id.toString())
           .set(todo.toMap(), SetOptions(merge: true));
-
-      print('✅ FirebaseSyncService: Tâche "${todo.title}" (ID: ${todo.id}) synchronisée avec succès');
-      print('   📍 Chemin Firestore: users/$userId/todos/${todo.id}');
-      debugPrint('✅ FirebaseSyncService: Tâche ${todo.id} synchronisée');
-    } catch (e, stackTrace) {
-      print('❌ FirebaseSyncService: ERREUR lors de la synchronisation de la tâche "${todo.title}": $e');
-      print('❌ Stack trace: $stackTrace');
-      debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation de la tâche: $e');
+    } catch (e) {
+      debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation de la tâche ${todo.id}: $e');
       rethrow;
     }
   }
@@ -372,7 +439,6 @@ class FirebaseSyncService {
           .doc(todoId.toString())
           .delete();
 
-      debugPrint('✅ FirebaseSyncService: Tâche $todoId supprimée de Firebase');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la suppression de la tâche: $e');
       rethrow;
@@ -387,8 +453,6 @@ class FirebaseSyncService {
     if (userId == null) return;
 
     try {
-      debugPrint('🔄 FirebaseSyncService: Synchronisation des projets...');
-
       final firestoreSnapshot = await _firestore
           .collection('users')
           .doc(userId)
@@ -404,8 +468,6 @@ class FirebaseSyncService {
 
       await _localStorage.updateAllProjects(mergedProjects);
       await _syncProjectsToFirebase(mergedProjects, firestoreProjects);
-
-      debugPrint('✅ FirebaseSyncService: ${mergedProjects.length} projets synchronisés');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation des projets: $e');
       rethrow;
@@ -461,22 +523,30 @@ class FirebaseSyncService {
       }
     }
 
-    if (updateCount > 0) {
-      await batch.commit();
-      debugPrint('✅ FirebaseSyncService: $updateCount projets mis à jour dans Firebase');
-    }
+      if (updateCount > 0) {
+        await batch.commit();
+      }
   }
 
   void _handleProjectsChanges(List<DocumentSnapshot> docs) {
+    if (_isHandlingRemoteChanges) return;
+    
     try {
+      _isHandlingRemoteChanges = true;
+      
       final projects = docs
           .map((doc) => Project.fromMap(doc.data() as Map<String, dynamic>))
           .toList();
 
-      _localStorage.updateAllProjects(projects);
-      debugPrint('🔄 FirebaseSyncService: ${projects.length} projets mis à jour depuis Firebase');
+      // Fusionner intelligemment avec les projets locaux
+      final localProjects = _localStorage.projects;
+      final mergedProjects = _mergeProjects(localProjects, projects);
+      
+      _localStorage.updateAllProjects(mergedProjects);
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la mise à jour des projets: $e');
+    } finally {
+      _isHandlingRemoteChanges = false;
     }
   }
 
@@ -492,7 +562,6 @@ class FirebaseSyncService {
           .doc(project.id.toString())
           .set(project.toMap(), SetOptions(merge: true));
 
-      debugPrint('✅ FirebaseSyncService: Projet ${project.id} synchronisé');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation du projet: $e');
       rethrow;
@@ -511,7 +580,6 @@ class FirebaseSyncService {
           .doc(projectId.toString())
           .delete();
 
-      debugPrint('✅ FirebaseSyncService: Projet $projectId supprimé de Firebase');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la suppression du projet: $e');
       rethrow;
@@ -525,8 +593,6 @@ class FirebaseSyncService {
     if (userId == null) return;
 
     try {
-      debugPrint('🔄 FirebaseSyncService: Synchronisation des préférences...');
-
       final prefsDoc = await _firestore
           .collection('users')
           .doc(userId)
@@ -553,8 +619,6 @@ class FirebaseSyncService {
           .collection('preferences')
           .doc('preferences')
           .set(mergedPrefs, SetOptions(merge: true));
-
-      debugPrint('✅ FirebaseSyncService: Préférences synchronisées');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation des préférences: $e');
       rethrow;
@@ -572,13 +636,18 @@ class FirebaseSyncService {
   }
 
   void _handlePreferencesChanges(Map<String, dynamic> data) {
+    if (_isHandlingRemoteChanges) return;
+    
     try {
+      _isHandlingRemoteChanges = true;
+      
       for (final entry in data.entries) {
         _preferencesService.setPreference(entry.key, entry.value);
       }
-      debugPrint('🔄 FirebaseSyncService: Préférences mises à jour depuis Firebase');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la mise à jour des préférences: $e');
+    } finally {
+      _isHandlingRemoteChanges = false;
     }
   }
 
@@ -589,8 +658,6 @@ class FirebaseSyncService {
     if (userId == null) return;
 
     try {
-      debugPrint('🔄 FirebaseSyncService: Synchronisation des données de timer...');
-
       final timerDoc = await _firestore
           .collection('users')
           .doc(userId)
@@ -617,8 +684,6 @@ class FirebaseSyncService {
           .collection('timer_data')
           .doc('timer_data')
           .set(mergedTimerData, SetOptions(merge: true));
-
-      debugPrint('✅ FirebaseSyncService: Données de timer synchronisées');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation des données de timer: $e');
       rethrow;
@@ -635,13 +700,18 @@ class FirebaseSyncService {
   }
 
   void _handleTimerDataChanges(Map<String, dynamic> data) {
+    if (_isHandlingRemoteChanges) return;
+    
     try {
+      _isHandlingRemoteChanges = true;
+      
       for (final entry in data.entries) {
         _localStorage.setTimerData(entry.key, entry.value);
       }
-      debugPrint('🔄 FirebaseSyncService: Données de timer mises à jour depuis Firebase');
     } catch (e) {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la mise à jour des données de timer: $e');
+    } finally {
+      _isHandlingRemoteChanges = false;
     }
   }
 

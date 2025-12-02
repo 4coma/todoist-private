@@ -133,3 +133,4 @@ Une fois la synchronisation vérifiée :
 2. ✅ Tester sur plusieurs appareils
 3. ✅ Vérifier le mode offline
 
+

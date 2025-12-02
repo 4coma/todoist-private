@@ -21,5 +21,5 @@
 ~~ajouter une petite animation en cas de validation de tâche~~
 ~~permettre le fait qu'il y a un switch auto entr ele dark et le light theme le soir et le jour~~
 ~~créer une réelle icone android, comme avec nuova~~
-- supabase
+~~supabase~~
 - site web de présentation et intégration à mon portfolio (également ajouter selfman ?)

@@ -100,6 +100,15 @@ class PreferencesService {
     await setPreference('notifications_enabled', value);
   }
 
+  // === PRÉFÉRENCES DE FONCTIONNALITÉS ===
+
+  // Liste de courses activée
+  bool get shoppingListEnabled => getPreference<bool>('shopping_list_enabled') ?? false;
+  
+  Future<void> setShoppingListEnabled(bool value) async {
+    await setPreference('shopping_list_enabled', value);
+  }
+
   // Rappels automatiques
   bool get autoReminders => getPreference<bool>('auto_reminders') ?? true;
   
@@ -251,6 +260,7 @@ class PreferencesService {
       'biometric_lock',
       'collect_stats',
       'share_anonymous_data',
+      'shopping_list_enabled',
     ];
 
     for (final key in keys) {
@@ -343,6 +353,7 @@ class PreferencesService {
       case 'biometric_lock':
       case 'collect_stats':
       case 'share_anonymous_data':
+      case 'shopping_list_enabled':
         return value is bool;
       
       case 'default_reminder_minutes':

@@ -93,3 +93,4 @@ Les `print()` apparaîtront même si `debugPrint` ne fonctionne pas.
 - [ ] Firestore créé dans Firebase Console
 - [ ] Logs Firebase visibles au démarrage
 
+

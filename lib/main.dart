@@ -28,6 +28,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'services/firebase_auth_service.dart';
 import 'services/firebase_sync_service.dart';
 import 'services/firebase_migration_service.dart';
+import 'services/project_service.dart';
+import 'services/preferences_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -434,6 +436,7 @@ class _TodoHomePageState extends State<TodoHomePage> {
   bool _showCompletedTasks = false; // Mode "Tâches achevées" (sidebar)
   bool _showCompletedTasksInProjects = false; // Option "Afficher les tâches terminées" (paramètres)
   bool _showNoProjectTasks = false; // Mode "Tâches sans projet"
+  bool _showShoppingList = false; // Mode "Courses" (liste de courses)
   bool _isSearchActive = false; // État de la recherche
   String _searchQuery = ''; // Terme de recherche
 
@@ -532,12 +535,30 @@ class _TodoHomePageState extends State<TodoHomePage> {
   Future<void> _loadSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final preferencesService = PreferencesService();
       setState(() {
         _showDescriptions = prefs.getBool('show_descriptions') ?? false;
         _showCompletedTasksInProjects = prefs.getBool('show_completed_tasks') ?? false;
         _openAiApiKeys = prefs.getString('openai_api_keys') ?? '';
       });
-      debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions, show_completed_tasks_in_projects = $_showCompletedTasksInProjects, openai_keys_présents = ${_openAiApiKeys.isNotEmpty}');
+      
+      // Vérifier si la liste de courses est activée et créer le projet si nécessaire
+      final shoppingListEnabled = preferencesService.shoppingListEnabled;
+      if (shoppingListEnabled) {
+        final projectService = ProjectService();
+        try {
+          await projectService.getOrCreateShoppingListProject();
+          // Recharger les projets pour inclure le projet "courses"
+          final localStorageService = LocalStorageService();
+          setState(() {
+            _projects = List<Project>.from(localStorageService.projects);
+          });
+        } catch (e) {
+          debugPrint('⚠️ Erreur lors de la création du projet courses: $e');
+        }
+      }
+      
+      debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions, show_completed_tasks_in_projects = $_showCompletedTasksInProjects, openai_keys_présents = ${_openAiApiKeys.isNotEmpty}, shopping_list_enabled = $shoppingListEnabled');
     } catch (e) {
       debugPrint('❌ Erreur lors du chargement des paramètres: $e');
     }
@@ -740,6 +761,24 @@ class _TodoHomePageState extends State<TodoHomePage> {
   }
 
   void _addTodo() {
+    // Si on est dans la vue "Courses", sélectionner automatiquement le projet "courses"
+    Project? projectToSelect = _selectedProject;
+    if (_showShoppingList) {
+      final shoppingListProject = ProjectService().getShoppingListProject();
+      if (shoppingListProject != null) {
+        projectToSelect = shoppingListProject;
+      }
+    }
+    
+    // Inclure le projet "courses" dans la liste des projets si activé
+    final List<Project> projectsToShow = List.from(_projects);
+    if (PreferencesService().shoppingListEnabled) {
+      final shoppingListProject = ProjectService().getShoppingListProject();
+      if (shoppingListProject != null && !projectsToShow.any((p) => p.id == shoppingListProject.id)) {
+        projectsToShow.add(shoppingListProject);
+      }
+    }
+    
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -752,8 +791,8 @@ class _TodoHomePageState extends State<TodoHomePage> {
           ),
         ),
         child: AddTodoModal(
-        projects: _projects,
-        selectedProject: _selectedProject, // Passer le projet sélectionné
+        projects: projectsToShow,
+        selectedProject: projectToSelect, // Passer le projet sélectionné (ou "courses" si dans la vue courses)
         ),
       ),
     ).then(_handleTodoResult);
@@ -881,6 +920,124 @@ class _TodoHomePageState extends State<TodoHomePage> {
       return data['text'];
     }
     return null;
+  }
+
+  /// Détecte si la transcription mentionne la liste de courses
+  bool _isShoppingListRequest(String text) {
+    final lowerText = text.toLowerCase();
+    final shoppingKeywords = [
+      'liste de courses',
+      'liste des courses',
+      'ajoute à la liste de courses',
+      'ajouter à la liste de courses',
+      'ajoute à la liste des courses',
+      'ajouter à la liste des courses',
+      'ajoute à courses',
+      'ajouter à courses',
+      'ajoute aux courses',
+      'ajouter aux courses',
+      'courses',
+      'liste courses',
+      'shopping list',
+    ];
+    
+    return shoppingKeywords.any((keyword) => lowerText.contains(keyword));
+  }
+
+  /// Extrait plusieurs éléments de la liste de courses depuis un texte
+  Future<List<Map<String, dynamic>>> _extractShoppingListItemsFromText(
+      String text, String apiKey) async {
+    final now = DateTime.now();
+    final nowIso = now.toIso8601String();
+    
+    final prompt = '''
+Tu es un assistant intelligent pour gérer une liste de courses. Analyse le texte suivant et extrait TOUS les éléments de courses mentionnés.
+
+Texte: "$text"
+
+INSTRUCTIONS IMPORTANTES :
+1. Si l'utilisateur mentionne "ajoute à la liste de courses", "ajouter aux courses", "liste de courses", etc., tu DOIS extraire TOUS les éléments mentionnés.
+2. Décompose la phrase en éléments individuels. Par exemple :
+   - "lait, fromage, oeufs, sel" → 4 éléments séparés
+   - "du sucre, du miel, du lait" → 3 éléments séparés
+   - "ajoute à la liste de courses les éléments suivants : lait, fromage, oeufs... et puis du sel aussi" → 4 éléments séparés
+3. Pour chaque élément, crée un objet avec :
+   - "title": Le nom de l'élément (ex: "Lait", "Fromage", "Oeufs", "Sel")
+   - "description": Optionnel, peut être vide
+   - "dueDate": null (pas de date d'échéance pour les courses)
+   - "reminder": null (pas de rappel par défaut pour les courses)
+4. Nettoie les noms d'éléments : enlève les articles ("du", "de la", "des", "le", "la", "les") et garde uniquement le nom de l'élément.
+5. Si plusieurs éléments sont mentionnés, retourne TOUS les éléments dans un tableau.
+
+EXEMPLES :
+- "ajoute à la liste de courses : lait, fromage, oeufs" → 
+  [
+    {"title": "Lait", "description": "", "dueDate": null, "reminder": null},
+    {"title": "Fromage", "description": "", "dueDate": null, "reminder": null},
+    {"title": "Oeufs", "description": "", "dueDate": null, "reminder": null}
+  ]
+
+- "ajoute du sucre, du miel et du lait à la liste de courses" →
+  [
+    {"title": "Sucre", "description": "", "dueDate": null, "reminder": null},
+    {"title": "Miel", "description": "", "dueDate": null, "reminder": null},
+    {"title": "Lait", "description": "", "dueDate": null, "reminder": null}
+  ]
+
+- "ajoute à la liste de courses les éléments suivants : lait, fromage, oeufs... et puis du sel aussi" →
+  [
+    {"title": "Lait", "description": "", "dueDate": null, "reminder": null},
+    {"title": "Fromage", "description": "", "dueDate": null, "reminder": null},
+    {"title": "Oeufs", "description": "", "dueDate": null, "reminder": null},
+    {"title": "Sel", "description": "", "dueDate": null, "reminder": null}
+  ]
+
+Réponds UNIQUEMENT avec un objet JSON contenant un tableau "items" respectant ce format :
+{
+  "items": [
+    {"title": "...", "description": "...", "dueDate": null, "reminder": null},
+    {"title": "...", "description": "...", "dueDate": null, "reminder": null},
+    ...
+  ]
+}
+''';
+
+    final response = await http.post(
+      Uri.parse('https://api.openai.com/v1/chat/completions'),
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-4o-mini',
+        'messages': [
+          {'role': 'user', 'content': prompt},
+        ],
+        'response_format': {'type': 'json_object'},
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final content = data['choices'][0]['message']['content'];
+      final jsonData = jsonDecode(content);
+      
+      // Le modèle retourne un objet JSON avec une clé "items" contenant le tableau
+      List<dynamic> items;
+      if (jsonData is Map && jsonData.containsKey('items')) {
+        items = jsonData['items'] as List<dynamic>;
+      } else if (jsonData is Map && jsonData.containsKey('todos')) {
+        items = jsonData['todos'] as List<dynamic>;
+      } else if (jsonData is List) {
+        items = jsonData;
+      } else {
+        // Si c'est un objet avec des clés numériques, convertir en liste
+        items = jsonData.values.toList();
+      }
+      
+      return items.map((item) => Map<String, dynamic>.from(item)).toList();
+    }
+    return [];
   }
 
   Future<Map<String, dynamic>?> _extractTodoFromText(
@@ -1090,6 +1247,105 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
       return;
     }
 
+    // Vérifier si c'est une demande de liste de courses
+    final isShoppingListRequest = PreferencesService().shoppingListEnabled && 
+                                    _isShoppingListRequest(transcription);
+    
+    if (isShoppingListRequest) {
+      // Mode liste de courses : décomposer en plusieurs tâches
+      if (mounted) {
+        _updateVoiceProcessingOverlay('Analyse de la liste de courses...');
+      }
+
+      List<Map<String, dynamic>> shoppingItems;
+      try {
+        shoppingItems = await _extractShoppingListItemsFromText(transcription, apiKey);
+        if (shoppingItems.isEmpty) {
+          if (mounted) {
+            Navigator.of(context).pop(); // Fermer le loader
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Aucun élément de courses détecté'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+          return;
+        }
+      } catch (e) {
+        if (mounted) {
+          Navigator.of(context).pop(); // Fermer le loader
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Erreur lors de l\'extraction des éléments: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Obtenir le projet "Courses"
+      final shoppingListProject = ProjectService().getShoppingListProject();
+      if (shoppingListProject == null) {
+        // Créer le projet s'il n'existe pas
+        await ProjectService().getOrCreateShoppingListProject();
+      }
+      final shoppingListProjectId = ProjectService.SHOPPING_LIST_PROJECT_ID;
+
+      // Mettre à jour le message
+      if (mounted) {
+        _updateVoiceProcessingOverlay('Création de ${shoppingItems.length} élément${shoppingItems.length > 1 ? 's' : ''}...');
+      }
+
+      // Créer toutes les tâches
+      final newTodos = <TodoItem>[];
+      int baseId = DateTime.now().millisecondsSinceEpoch;
+      
+      for (int i = 0; i < shoppingItems.length; i++) {
+        final item = shoppingItems[i];
+        final newTodo = TodoItem(
+          id: baseId + i, // IDs séquentiels pour éviter les collisions
+          title: item['title']?.toString().trim() ?? 'Sans titre',
+          description: item['description']?.toString().trim() ?? '',
+          priority: Priority.medium,
+          projectId: shoppingListProjectId, // Toujours le projet "Courses"
+          isCompleted: false,
+          dueDate: null, // Pas de date d'échéance pour les courses
+          reminder: null, // Pas de rappel par défaut pour les courses
+        );
+        newTodos.add(newTodo);
+      }
+
+      setState(() {
+        _todos.addAll(newTodos);
+      });
+      await _saveData();
+
+      // Fermer le loader et afficher la confirmation
+      if (mounted) {
+        Navigator.of(context).pop(); // Fermer le loader
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text('${newTodos.length} élément${newTodos.length > 1 ? 's' : ''} ajouté${newTodos.length > 1 ? 's' : ''} à la liste de courses'),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      
+      return; // Sortir de la fonction après avoir traité la liste de courses
+    }
+
+    // Mode normal : traitement d'une seule tâche
     // Mettre à jour le message
     if (mounted) {
       _updateVoiceProcessingOverlay('Analyse de la tâche...');
@@ -2518,7 +2774,11 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 
   List<TodoItem> get _filteredTodos {
     List<TodoItem> filtered;
-    if (_showCompletedTasks) {
+    if (_showShoppingList) {
+      // Mode "Courses" - afficher uniquement les tâches du projet "courses"
+      final shoppingListProjectId = ProjectService.SHOPPING_LIST_PROJECT_ID;
+      filtered = _todos.where((todo) => todo.projectId == shoppingListProjectId && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+    } else if (_showCompletedTasks) {
       // Mode "Tâches achevées" - afficher seulement les tâches terminées
       filtered = _todos.where((todo) => todo.isCompleted && todo.isRootTask).toList();
     } else if (_showNoProjectTasks) {
@@ -2526,7 +2786,9 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
       filtered = _todos.where((todo) => todo.projectId == null && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
     } else if (_selectedProject == null) {
       // Vue "Toutes les tâches" - afficher les tâches non terminées (ou toutes si l'option est activée)
-      filtered = _todos.where((todo) => (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      // Exclure les tâches du projet "courses" de la vue principale
+      final shoppingListProjectId = ProjectService.SHOPPING_LIST_PROJECT_ID;
+      filtered = _todos.where((todo) => todo.projectId != shoppingListProjectId && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
     } else {
       // Vue projet spécifique - afficher les tâches du projet (non terminées ou toutes si l'option est activée)
       filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
@@ -2806,12 +3068,13 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                   _buildDrawerItem(
                     icon: Icons.list,
                     label: 'Toutes les tâches',
-                    isSelected: _selectedProject == null && !_showCompletedTasks && !_showNoProjectTasks && _currentView == ViewMode.list,
+                    isSelected: _selectedProject == null && !_showCompletedTasks && !_showNoProjectTasks && !_showShoppingList && _currentView == ViewMode.list,
                     onTap: () {
                       setState(() {
                         _selectedProject = null;
                         _showCompletedTasks = false;
                         _showNoProjectTasks = false;
+                        _showShoppingList = false;
                         _currentView = ViewMode.list;
                       });
                       Navigator.pop(context);
@@ -2824,10 +3087,32 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                     onTap: () {
                       setState(() {
                         _currentView = ViewMode.calendar;
+                        _showShoppingList = false;
+                        _showCompletedTasks = false;
+                        _showNoProjectTasks = false;
+                        _selectedProject = null;
                       });
                       Navigator.pop(context);
                     },
                   ),
+                  // Élément "Courses" (conditionnel selon les préférences)
+                  if (PreferencesService().shoppingListEnabled)
+                    _buildDrawerItem(
+                      icon: Icons.shopping_cart,
+                      label: 'Courses',
+                      count: _todos.where((t) => t.projectId == ProjectService.SHOPPING_LIST_PROJECT_ID && !t.isCompleted).length,
+                      isSelected: _showShoppingList,
+                      onTap: () {
+                        setState(() {
+                          _showShoppingList = true;
+                          _showCompletedTasks = false;
+                          _showNoProjectTasks = false;
+                          _selectedProject = null;
+                          _currentView = ViewMode.list;
+                        });
+                        Navigator.pop(context);
+                      },
+                    ),
                   _buildDrawerItem(
                     icon: Icons.check_circle_outline,
                     label: 'Tâches achevées',
@@ -2858,13 +3143,15 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                       setState(() {
                         _showNoProjectTasks = true;
                         _showCompletedTasks = false;
+                        _showShoppingList = false;
                         _selectedProject = null;
+                        _currentView = ViewMode.list;
                       });
                       Navigator.pop(context);
                     },
                   ),
                   
-                  ..._projects.map((project) {
+                  ..._projects.where((project) => project.id != ProjectService.SHOPPING_LIST_PROJECT_ID).map((project) {
                     final count = _todos.where((t) => t.projectId == project.id && !t.isCompleted).length;
                     return _buildDrawerItem(
                       icon: project.icon,
@@ -2877,6 +3164,8 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                           _selectedProject = project;
                           _showNoProjectTasks = false;
                           _showCompletedTasks = false;
+                          _showShoppingList = false;
+                          _currentView = ViewMode.list;
                         });
                         Navigator.pop(context);
                       },
@@ -5458,6 +5747,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _showDescriptions = false;
   bool _showCompletedTasksInProjects = false;
+  bool _shoppingListEnabled = false;
   String _selectedColor = 'blue';
   bool _isDarkMode = false;
   String _openAiApiKeys = '';
@@ -5472,13 +5762,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    final preferencesService = PreferencesService();
     setState(() {
       _showDescriptions = prefs.getBool('show_descriptions') ?? false;
       _showCompletedTasksInProjects = prefs.getBool('show_completed_tasks') ?? false;
+      _shoppingListEnabled = preferencesService.shoppingListEnabled;
       _openAiApiKeys = prefs.getString('openai_api_keys') ?? '';
       _apiKeyController.text = _openAiApiKeys;
     });
-    debugPrint('📋 [SettingsScreen] Préférences chargées: show_descriptions = $_showDescriptions, show_completed_tasks = $_showCompletedTasksInProjects');
+    debugPrint('📋 [SettingsScreen] Préférences chargées: show_descriptions = $_showDescriptions, show_completed_tasks = $_showCompletedTasksInProjects, shopping_list_enabled = $_shoppingListEnabled');
   }
 
   Future<void> _loadThemePreferences() async {
@@ -5513,6 +5805,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     
     // Forcer la mise à jour de l'interface
     widget.onSettingsChanged();
+  }
+
+  Future<void> _saveShoppingListEnabled(bool value) async {
+    debugPrint('🔧 [SettingsScreen] Sauvegarde shopping_list_enabled: $value');
+    final preferencesService = PreferencesService();
+    await preferencesService.setShoppingListEnabled(value);
+    setState(() {
+      _shoppingListEnabled = value;
+    });
+    
+    // Si activé, créer le projet "courses"
+    if (value) {
+      final projectService = ProjectService();
+      try {
+        await projectService.getOrCreateShoppingListProject();
+        debugPrint('✅ [SettingsScreen] Projet "courses" créé');
+      } catch (e) {
+        debugPrint('⚠️ [SettingsScreen] Erreur lors de la création du projet courses: $e');
+      }
+    }
+    
+    debugPrint('✅ [SettingsScreen] Préférence sauvegardée: shopping_list_enabled = $value');
+    widget.onSettingsChanged();
+    widget.onDataReload();
   }
 
   Future<void> _saveOpenAiApiKeys(String value) async {
@@ -5875,6 +6191,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                             value: _showCompletedTasksInProjects,
                             onChanged: _saveShowCompletedTasks,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                            activeColor: DSColor.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: surfaceSoftColor,
+                            borderRadius: DSRadius.soft,
+                          ),
+                          child: SwitchListTile(
+                            title: Text('Activer la liste de courses', style: DSTypo.bodyOf(context)),
+                            subtitle: Text(
+                              'Afficher l\'élément "Courses" dans le menu latéral',
+                              style: DSTypo.caption.copyWith(color: mutedColor),
+                            ),
+                            value: _shoppingListEnabled,
+                            onChanged: _saveShoppingListEnabled,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                             activeColor: DSColor.primary,
                           ),
