@@ -21,6 +21,7 @@ import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'screens/design_system_demo.dart';
+import 'screens/auth/login_screen.dart';
 import 'design_system/tokens.dart';
 import 'design_system/widgets.dart';
 import 'design_system/forms.dart';
@@ -30,6 +31,7 @@ import 'services/firebase_sync_service.dart';
 import 'services/firebase_migration_service.dart';
 import 'services/project_service.dart';
 import 'services/preferences_service.dart';
+import 'services/todo_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,69 +56,9 @@ void main() async {
   // Initialiser le service de notifications
   await NotificationService.initialize();
   
-  // Initialiser Firebase Sync si un utilisateur est connecté
-  try {
-    final authService = FirebaseAuthService();
-    
-    // Test d'authentification anonyme (pour tester la synchronisation)
-    if (!authService.isAuthenticated) {
-      try {
-        print('🔄 Tentative d\'authentification anonyme...');
-        await authService.signInAnonymously();
-        final userId = authService.currentUserId;
-        print('✅ Authentifié anonymement avec succès');
-        print('   👤 User ID: $userId');
-        print('   📍 Chemin Firestore: users/$userId/');
-        debugPrint('✅ Authentifié anonymement');
-      } catch (e, stackTrace) {
-        print('❌ ERREUR authentification anonyme: $e');
-        print('❌ Stack trace: $stackTrace');
-        debugPrint('⚠️ Erreur lors de l\'authentification anonyme: $e');
-      }
-    }
-    
-    if (authService.isAuthenticated) {
-      print('🔄 Initialisation de la synchronisation Firebase...');
-      final syncService = FirebaseSyncService();
-      await syncService.initialize();
-      print('✅ Firebase Sync initialisé avec succès');
-      debugPrint('✅ Firebase Sync initialisé pour l\'utilisateur connecté');
-      
-      // Vérifier et effectuer la migration si nécessaire
-      final migrationService = FirebaseMigrationService();
-      if (!await migrationService.hasMigrated() && migrationService.hasDataToMigrate()) {
-        print('🔄 Données locales détectées, migration automatique...');
-        debugPrint('🔄 Données locales détectées, migration automatique...');
-        try {
-          await migrationService.migrateAllData();
-          print('✅ Migration terminée avec succès');
-        } catch (e, stackTrace) {
-          print('❌ ERREUR migration: $e');
-          print('❌ Stack trace: $stackTrace');
-          debugPrint('⚠️ Erreur lors de la migration automatique: $e');
-        }
-      } else {
-        print('ℹ️ Aucune migration nécessaire (déjà migré ou pas de données)');
-        
-        // Forcer la synchronisation de toutes les tâches existantes (pour réparer)
-        // TODO: Retirer ce code après vérification
-        try {
-          print('🔄 Synchronisation forcée de toutes les tâches existantes...');
-          await migrationService.forceSyncAllTodos();
-          print('✅ Synchronisation forcée terminée');
-        } catch (e) {
-          print('⚠️ Erreur lors de la synchronisation forcée: $e');
-        }
-      }
-    } else {
-      print('⚠️ Aucun utilisateur authentifié, synchronisation Firebase désactivée');
-    }
-  } catch (e, stackTrace) {
-    print('❌ ERREUR générale Firebase Sync: $e');
-    print('❌ Stack trace: $stackTrace');
-    debugPrint('⚠️ Erreur lors de l\'initialisation Firebase Sync: $e');
-    // L'application peut continuer sans synchronisation Firebase
-  }
+  // Ne plus faire d'authentification anonyme automatique
+  // L'utilisateur doit se connecter via l'écran de login
+  debugPrint('ℹ️ Authentification requise - L\'utilisateur devra se connecter via l\'écran de login');
   
   // Demander les permissions de notification explicitement
   try {
@@ -382,11 +324,31 @@ class _TodoAppState extends State<TodoApp> {
         Locale('fr', 'BE'), // Français belge
         Locale('fr'), // Français par défaut
       ],
-      home: TodoHomePage(
-        onThemeChanged: _changeTheme,
-        onThemeChangedLegacy: _changeThemeLegacy,
-        autoThemeMode: _autoThemeMode,
-        onAutoThemeModeChanged: _setAutoThemeMode,
+      home: StreamBuilder(
+        stream: FirebaseAuthService().authStateChanges,
+        builder: (context, snapshot) {
+          // Afficher un loader pendant la vérification de l'authentification
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(
+                child: CircularProgressIndicator(),
+              ),
+            );
+          }
+          
+          // Si l'utilisateur est connecté, afficher l'app principale
+          if (snapshot.hasData && snapshot.data != null) {
+            return TodoHomePage(
+              onThemeChanged: _changeTheme,
+              onThemeChangedLegacy: _changeThemeLegacy,
+              autoThemeMode: _autoThemeMode,
+              onAutoThemeModeChanged: _setAutoThemeMode,
+            );
+          }
+          
+          // Sinon, afficher l'écran de login
+          return const LoginScreen();
+        },
       ),
     );
   }
@@ -451,9 +413,41 @@ class _TodoHomePageState extends State<TodoHomePage> {
 
   final TimerService _timerService = TimerService();
 
+  // Fonction pour initialiser Firebase Sync quand un utilisateur se connecte
+  void _initializeFirebaseSyncForUser() async {
+    try {
+      final authService = FirebaseAuthService();
+      if (authService.isAuthenticated) {
+        debugPrint('🔄 Initialisation de la synchronisation Firebase...');
+        final syncService = FirebaseSyncService();
+        await syncService.initialize();
+        debugPrint('✅ Firebase Sync initialisé avec succès');
+        
+        // Vérifier et effectuer la migration si nécessaire
+        final migrationService = FirebaseMigrationService();
+        if (!await migrationService.hasMigrated() && migrationService.hasDataToMigrate()) {
+          debugPrint('🔄 Données locales détectées, migration automatique...');
+          try {
+            await migrationService.migrateAllData();
+            debugPrint('✅ Migration terminée avec succès');
+          } catch (e) {
+            debugPrint('⚠️ Erreur lors de la migration automatique: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Erreur lors de l\'initialisation Firebase Sync: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    // Initialiser Firebase Sync si l'utilisateur est déjà connecté
+    _initializeFirebaseSyncForUser();
+    // Log de version pour diagnostic
+    debugPrint('🚀 ===== APP VERSION 1.0.0+3 - SHOPPING LIST FEATURE ENABLED =====');
+    debugPrint('🚀 Shopping list code present: ${ProjectService.SHOPPING_LIST_PROJECT_ID}');
     _timerService.addListener(_onTimerTick);
     _loadData();
     _loadSettings();
@@ -461,6 +455,27 @@ class _TodoHomePageState extends State<TodoHomePage> {
     
     // Configurer la variable globale pour la navigation depuis les notifications
     _globalHomePageState = this;
+    
+    // Recharger les données après 3 secondes pour récupérer les données depuis Firebase
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        debugPrint('🔄 Rechargement automatique des données après 3 secondes...');
+        _loadData();
+      }
+    });
+    
+    // Recharger les données toutes les 5 secondes pendant les 30 premières secondes
+    // pour s'assurer que les données Firebase sont bien chargées
+    int reloadCount = 0;
+    Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (mounted && reloadCount < 6) {
+        reloadCount++;
+        debugPrint('🔄 Rechargement automatique #$reloadCount des données...');
+        _loadData();
+      } else {
+        timer.cancel();
+      }
+    });
   }
 
   @override
@@ -544,18 +559,24 @@ class _TodoHomePageState extends State<TodoHomePage> {
       
       // Vérifier si la liste de courses est activée et créer le projet si nécessaire
       final shoppingListEnabled = preferencesService.shoppingListEnabled;
+      debugPrint('🛒 [VERSION 1.0.0+3] shoppingListEnabled = $shoppingListEnabled');
       if (shoppingListEnabled) {
+        debugPrint('🛒 [VERSION 1.0.0+3] Création du projet shopping list...');
         final projectService = ProjectService();
         try {
-          await projectService.getOrCreateShoppingListProject();
+          final shoppingProject = await projectService.getOrCreateShoppingListProject();
+          debugPrint('🛒 [VERSION 1.0.0+3] Projet shopping list créé: ${shoppingProject.name} (ID: ${shoppingProject.id})');
           // Recharger les projets pour inclure le projet "courses"
           final localStorageService = LocalStorageService();
           setState(() {
             _projects = List<Project>.from(localStorageService.projects);
           });
+          debugPrint('🛒 [VERSION 1.0.0+3] Projets rechargés: ${_projects.length} projets');
         } catch (e) {
-          debugPrint('⚠️ Erreur lors de la création du projet courses: $e');
+          debugPrint('⚠️ [VERSION 1.0.0+3] Erreur lors de la création du projet courses: $e');
         }
+      } else {
+        debugPrint('🛒 [VERSION 1.0.0+3] Shopping list désactivée');
       }
       
       debugPrint('✅ Paramètres chargés: show_descriptions = $_showDescriptions, show_completed_tasks_in_projects = $_showCompletedTasksInProjects, openai_keys_présents = ${_openAiApiKeys.isNotEmpty}, shopping_list_enabled = $shoppingListEnabled');
@@ -711,22 +732,22 @@ class _TodoHomePageState extends State<TodoHomePage> {
         }
       }
       
-      setState(() {
-        _todos.add(newTodo);
-        
-        // Ajouter les sous-tâches avec le bon parentId
-        for (final subTask in subTasks) {
-          final updatedSubTask = subTask.copyWith(
-            parentId: newTodo.id, // Lier à la tâche parente
-            level: newTodo.level + 1,
-            projectId: newTodo.projectId, // Hériter du projet de la tâche principale
-          );
-          _todos.add(updatedSubTask);
-        }
-      });
+      // Utiliser TodoService pour ajouter la tâche (synchronise automatiquement avec Firebase)
+      final todoService = TodoService();
+      final savedTodo = await todoService.addTodo(newTodo);
       
-      // Sauvegarder les données
-      await _saveData();
+      // Ajouter les sous-tâches avec le bon parentId
+      for (final subTask in subTasks) {
+        final updatedSubTask = subTask.copyWith(
+          parentId: savedTodo.id, // Lier à la tâche parente
+          level: savedTodo.level + 1,
+          projectId: savedTodo.projectId, // Hériter du projet de la tâche principale
+        );
+        await todoService.addTodo(updatedSubTask);
+      }
+      
+      // Recharger les données pour mettre à jour l'interface
+      await _loadData();
       // Planifier la notification pour la tâche principale
       if (newTodo.reminder != null) {
         await NotificationService.scheduleTaskReminder(
@@ -1317,10 +1338,14 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
         newTodos.add(newTodo);
       }
 
-      setState(() {
-        _todos.addAll(newTodos);
-      });
-      await _saveData();
+      // Utiliser TodoService pour ajouter les tâches (synchronise automatiquement avec Firebase)
+      final todoService = TodoService();
+      for (final todo in newTodos) {
+        await todoService.addTodo(todo);
+      }
+      
+      // Recharger les données pour mettre à jour l'interface
+      await _loadData();
 
       // Fermer le loader et afficher la confirmation
       if (mounted) {
@@ -1454,10 +1479,12 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
       reminder: reminder,
     );
 
-    setState(() {
-      _todos.add(newTodo);
-    });
-    await _saveData();
+    // Utiliser TodoService pour ajouter la tâche (synchronise automatiquement avec Firebase)
+    final todoService = TodoService();
+    await todoService.addTodo(newTodo);
+    
+    // Recharger les données pour mettre à jour l'interface
+    await _loadData();
     
     // Planifier la notification si un rappel est défini
     if (newTodo.reminder != null) {
@@ -1513,11 +1540,12 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
         todo: todo,
         projects: _projects,
         subTasks: subTasks,
-        onAddSubTask: (subTask) {
+        onAddSubTask: (subTask) async {
           debugPrint('🟢 [_openEditModal] onAddSubTask appelé pour: ${subTask.title}');
-          setState(() {
-            _todos.add(subTask);
-          });
+          // Utiliser TodoService pour ajouter la sous-tâche (synchronise automatiquement avec Firebase)
+          final todoService = TodoService();
+          await todoService.addTodo(subTask);
+          await _loadData();
           debugPrint('🟢 [_openEditModal] Sous-tâche ajoutée à la liste principale');
         },
         onToggleSubTask: (id) {
@@ -1832,55 +1860,58 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     }
 
     // Mettre à jour l'état immédiatement pour déclencher l'animation
-    setState(() {
-      try {
+    try {
+      setState(() {
         todo.isCompleted = isNowCompleted;
-        
-        // Si la tâche est marquée comme terminée et qu'elle est récurrente, créer une nouvelle occurrence
-        if (todo.isCompleted && todo.isRecurring && todo.recurrenceTime != null) {
-          final nextOccurrence = todo.getNextOccurrence();
-          if (nextOccurrence != null) {
-            final newTodo = TodoItem(
-              id: DateTime.now().millisecondsSinceEpoch,
-              title: todo.title,
-              description: todo.description,
-              dueDate: nextOccurrence,
-              priority: todo.priority,
-              projectId: todo.projectId,
-              isCompleted: false,
-              parentId: todo.parentId,
-              level: todo.level,
-              reminder: nextOccurrence,
-              estimatedMinutes: todo.estimatedMinutes,
-              elapsedMinutes: 0,
-              elapsedSeconds: 0,
-              recurrenceType: todo.recurrenceType,
-              recurrenceDayOfWeek: todo.recurrenceDayOfWeek,
-              recurrenceDayOfMonth: todo.recurrenceDayOfMonth,
-              recurrenceTime: todo.recurrenceTime,
-            );
-            
-            _todos.add(newTodo);
-            debugPrint('✅ Nouvelle occurrence créée pour la tâche récurrente "${todo.title}" à ${nextOccurrence}');
-            
-            // Programmer la notification pour la nouvelle occurrence
-            NotificationService.scheduleTaskReminder(
-              taskId: newTodo.id,
-              title: newTodo.title,
-              body: 'Tâche récurrente: ${newTodo.recurrenceText}',
-              scheduledDate: nextOccurrence,
-            ).then((_) {
-              debugPrint('✅ Notification programmée pour la nouvelle occurrence');
-            }).catchError((e) {
-              debugPrint('❌ Erreur programmation notification nouvelle occurrence: $e');
-            });
-          }
+      });
+      
+      // Si la tâche est marquée comme terminée et qu'elle est récurrente, créer une nouvelle occurrence
+      if (isNowCompleted && todo.isRecurring && todo.recurrenceTime != null) {
+        final nextOccurrence = todo.getNextOccurrence();
+        if (nextOccurrence != null) {
+          final newTodo = TodoItem(
+            id: DateTime.now().millisecondsSinceEpoch,
+            title: todo.title,
+            description: todo.description,
+            dueDate: nextOccurrence,
+            priority: todo.priority,
+            projectId: todo.projectId,
+            isCompleted: false,
+            parentId: todo.parentId,
+            level: todo.level,
+            reminder: nextOccurrence,
+            estimatedMinutes: todo.estimatedMinutes,
+            elapsedMinutes: 0,
+            elapsedSeconds: 0,
+            recurrenceType: todo.recurrenceType,
+            recurrenceDayOfWeek: todo.recurrenceDayOfWeek,
+            recurrenceDayOfMonth: todo.recurrenceDayOfMonth,
+            recurrenceTime: todo.recurrenceTime,
+          );
+          
+          // Utiliser TodoService pour ajouter la nouvelle occurrence (synchronise automatiquement avec Firebase)
+          final todoService = TodoService();
+          await todoService.addTodo(newTodo);
+          await _loadData();
+          debugPrint('✅ Nouvelle occurrence créée pour la tâche récurrente "${todo.title}" à ${nextOccurrence}');
+          
+          // Programmer la notification pour la nouvelle occurrence
+          NotificationService.scheduleTaskReminder(
+            taskId: newTodo.id,
+            title: newTodo.title,
+            body: 'Tâche récurrente: ${newTodo.recurrenceText}',
+            scheduledDate: nextOccurrence,
+          ).then((_) {
+            debugPrint('✅ Notification programmée pour la nouvelle occurrence');
+          }).catchError((e) {
+            debugPrint('❌ Erreur programmation notification nouvelle occurrence: $e');
+          });
         }
-      } catch (e) {
-        debugPrint('❌ Tâche non trouvée pour toggle: $id');
-        return;
       }
-    });
+    } catch (e) {
+      debugPrint('❌ Tâche non trouvée pour toggle: $id');
+      return;
+    }
     
     // Sauvegarder les données
     await _saveData();
@@ -2774,24 +2805,40 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 
   List<TodoItem> get _filteredTodos {
     List<TodoItem> filtered;
+    debugPrint('🔍 [FILTER] _showShoppingList=$_showShoppingList, _showCompletedTasks=$_showCompletedTasks, _showNoProjectTasks=$_showNoProjectTasks, _selectedProject=${_selectedProject?.name ?? "null"}');
+    debugPrint('🔍 [FILTER] Total tâches: ${_todos.length}, Root tasks: ${_todos.where((t) => t.isRootTask).length}');
+    
     if (_showShoppingList) {
       // Mode "Courses" - afficher uniquement les tâches du projet "courses"
       final shoppingListProjectId = ProjectService.SHOPPING_LIST_PROJECT_ID;
       filtered = _todos.where((todo) => todo.projectId == shoppingListProjectId && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTER] Mode Courses: ${filtered.length} tâches');
     } else if (_showCompletedTasks) {
       // Mode "Tâches achevées" - afficher seulement les tâches terminées
       filtered = _todos.where((todo) => todo.isCompleted && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTER] Mode Tâches achevées: ${filtered.length} tâches');
     } else if (_showNoProjectTasks) {
       // Vue "Tâches sans projet" - afficher les tâches sans projet (non terminées ou toutes si l'option est activée)
       filtered = _todos.where((todo) => todo.projectId == null && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTER] Mode Tâches sans projet: ${filtered.length} tâches');
     } else if (_selectedProject == null) {
       // Vue "Toutes les tâches" - afficher les tâches non terminées (ou toutes si l'option est activée)
       // Exclure les tâches du projet "courses" de la vue principale
       final shoppingListProjectId = ProjectService.SHOPPING_LIST_PROJECT_ID;
+      final allRootTasks = _todos.where((t) => t.isRootTask).toList();
+      final withProject = allRootTasks.where((t) => t.projectId != null && t.projectId != shoppingListProjectId).toList();
+      final withoutProject = allRootTasks.where((t) => t.projectId == null).toList();
+      final shoppingListTasks = allRootTasks.where((t) => t.projectId == shoppingListProjectId).toList();
+      debugPrint('🔍 [FILTER] Vue "Toutes les tâches":');
+      debugPrint('🔍 [FILTER]   - Tâches avec projet (hors Courses): ${withProject.length}');
+      debugPrint('🔍 [FILTER]   - Tâches sans projet: ${withoutProject.length}');
+      debugPrint('🔍 [FILTER]   - Tâches Courses (exclues): ${shoppingListTasks.length}');
       filtered = _todos.where((todo) => todo.projectId != shoppingListProjectId && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTER]   - Total filtré: ${filtered.length} tâches');
     } else {
       // Vue projet spécifique - afficher les tâches du projet (non terminées ou toutes si l'option est activée)
       filtered = _todos.where((todo) => todo.projectId == _selectedProject!.id && (_showCompletedTasksInProjects || !todo.isCompleted) && todo.isRootTask).toList();
+      debugPrint('🔍 [FILTER] Vue projet "${_selectedProject!.name}": ${filtered.length} tâches');
     }
     
     // Séparer les tâches terminées et non terminées AVANT le tri
@@ -3070,6 +3117,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                     label: 'Toutes les tâches',
                     isSelected: _selectedProject == null && !_showCompletedTasks && !_showNoProjectTasks && !_showShoppingList && _currentView == ViewMode.list,
                     onTap: () {
+                      debugPrint('🔍 [NAV] Clic sur "Toutes les tâches" - Réinitialisation des états');
                       setState(() {
                         _selectedProject = null;
                         _showCompletedTasks = false;
@@ -3077,6 +3125,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                         _showShoppingList = false;
                         _currentView = ViewMode.list;
                       });
+                      debugPrint('🔍 [NAV] États après réinitialisation: _showNoProjectTasks=$_showNoProjectTasks, _showShoppingList=$_showShoppingList, _selectedProject=${_selectedProject?.name ?? "null"}');
                       Navigator.pop(context);
                     },
                   ),
@@ -3096,21 +3145,34 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
                     },
                   ),
                   // Élément "Courses" (conditionnel selon les préférences)
-                  if (PreferencesService().shoppingListEnabled)
-                    _buildDrawerItem(
-                      icon: Icons.shopping_cart,
-                      label: 'Courses',
-                      count: _todos.where((t) => t.projectId == ProjectService.SHOPPING_LIST_PROJECT_ID && !t.isCompleted).length,
-                      isSelected: _showShoppingList,
-                      onTap: () {
-                        setState(() {
-                          _showShoppingList = true;
-                          _showCompletedTasks = false;
-                          _showNoProjectTasks = false;
-                          _selectedProject = null;
-                          _currentView = ViewMode.list;
-                      });
-                      Navigator.pop(context);
+                  Builder(
+                    builder: (context) {
+                      final shoppingEnabled = PreferencesService().shoppingListEnabled;
+                      debugPrint('🛒 [VERSION 1.0.0+3] Sidebar - shoppingListEnabled = $shoppingEnabled');
+                      if (shoppingEnabled) {
+                        final count = _todos.where((t) => t.projectId == ProjectService.SHOPPING_LIST_PROJECT_ID && !t.isCompleted).length;
+                        debugPrint('🛒 [VERSION 1.0.0+3] Sidebar - Affichage élément Courses avec count = $count');
+                        return _buildDrawerItem(
+                          icon: Icons.shopping_cart,
+                          label: 'Courses',
+                          count: count,
+                          isSelected: _showShoppingList,
+                          onTap: () {
+                            debugPrint('🛒 [VERSION 1.0.0+3] Sidebar - Tap sur Courses');
+                            setState(() {
+                              _showShoppingList = true;
+                              _showCompletedTasks = false;
+                              _showNoProjectTasks = false;
+                              _selectedProject = null;
+                              _currentView = ViewMode.list;
+                            });
+                            Navigator.pop(context);
+                          },
+                        );
+                      } else {
+                        debugPrint('🛒 [VERSION 1.0.0+3] Sidebar - Shopping list désactivée, élément Courses masqué');
+                        return const SizedBox.shrink();
+                      }
                     },
                   ),
                   _buildDrawerItem(
@@ -6158,6 +6220,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ],
                         ),
                         const SizedBox(height: 20),
+                        // OPTION LISTE DE COURSES EN PREMIER POUR VISIBILITÉ
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: surfaceSoftColor,
+                            borderRadius: DSRadius.soft,
+                            border: Border.all(color: DSColor.primary.withOpacity(0.3), width: 2),
+                          ),
+                          child: SwitchListTile(
+                            title: Text('🛒 Activer la liste de courses', style: DSTypo.bodyOf(context).copyWith(fontWeight: FontWeight.bold)),
+                            subtitle: Text(
+                              'Afficher l\'élément "Courses" dans le menu latéral',
+                              style: DSTypo.caption.copyWith(color: mutedColor),
+                            ),
+                            value: _shoppingListEnabled,
+                            onChanged: (value) {
+                              debugPrint('🛒 [VERSION 1.0.0+3] Settings - Toggle shopping list: $value');
+                              _saveShoppingListEnabled(value);
+                            },
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                            activeColor: DSColor.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: BoxDecoration(
@@ -6195,45 +6281,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             activeColor: DSColor.primary,
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: BoxDecoration(
-                            color: surfaceSoftColor,
-                            borderRadius: DSRadius.soft,
-                          ),
-                          child: SwitchListTile(
-                            title: Text('Activer la liste de courses', style: DSTypo.bodyOf(context)),
-                            subtitle: Text(
-                              'Afficher l\'élément "Courses" dans le menu latéral',
-                              style: DSTypo.caption.copyWith(color: mutedColor),
-                            ),
-                            value: _shoppingListEnabled,
-                            onChanged: _saveShoppingListEnabled,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                            activeColor: DSColor.primary,
-                          ),
-                        ),
                         const SizedBox(height: 16),
-                        // Bouton Démo Design System
-                        SizedBox(
-                          width: double.infinity,
-                          child: DSButton.secondary(
-                            label: 'Voir la démo UI',
-                            icon: Icons.design_services,
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => const DesignSystemDemoScreen()),
-                              );
-                            },
-                          ),
-                        ),
                       ],
                     ),
                   ),
 
-                  // Section Données
+                  // Section Authentification
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(20),
@@ -6247,319 +6300,105 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.storage, color: DSColor.primary, size: 24),
+                            Icon(Icons.account_circle, color: DSColor.primary, size: 24),
                             const SizedBox(width: 12),
-                            Text('Données', style: DSTypo.h2Of(context)),
+                            Text('Authentification', style: DSTypo.h2Of(context)),
                           ],
                         ),
                         const SizedBox(height: 16),
-                        Text(
-                          'Sauvegardez ou restaurez toutes vos données (tâches, projets, préférences)',
-                          style: DSTypo.body.copyWith(color: mutedColor),
-                        ),
-                        const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DSButton(
-                                label: 'Sauvegarder',
-                                icon: Icons.download,
-                                onPressed: () async {
-                                  try {
-                                    // Afficher un indicateur de chargement
-                                    showDialog(
-                                      context: context,
-                                      barrierDismissible: false,
-                                      builder: (context) => const Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
-                                    );
-
-                                    final exportService = DataExportImportService();
-                                    final data = exportService.exportAllData();
-                                    
-                                    final fileService = FileService();
-                                    final savedPath = await fileService.saveDataToFile(data);
-                                    
-                                    // Fermer l'indicateur de chargement
-                                    Navigator.of(context).pop();
-                                    
-                                    if (savedPath != null) {
-                                      debugPrint('✅ Export réussi: \\${data.length} clés -> \\${savedPath}');
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('Sauvegarde réussie !\\nFichier: \\${savedPath.split('/').last}'),
-                                          backgroundColor: Colors.green,
-                                          duration: const Duration(seconds: 4),
-                                        ),
-                                      );
-                                    } else {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Sauvegarde annulée'),
-                                          backgroundColor: Colors.orange,
-                                        ),
-                                      );
-                                    }
-                                  } catch (e) {
-                                    // Fermer l'indicateur de chargement en cas d'erreur
-                                    if (Navigator.canPop(context)) {
-                                      Navigator.of(context).pop();
-                                    }
-                                    debugPrint('❌ Erreur export: \\${e}');
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Erreur lors de la sauvegarde: \\${e}'),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
-                                  }
-                                },
+                        // Affichage de l'utilisateur actuel
+                        StreamBuilder(
+                          stream: FirebaseAuthService().authStateChanges,
+                          builder: (context, snapshot) {
+                            final authService = FirebaseAuthService();
+                            final currentUser = authService.currentUser;
+                            
+                            return Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: surfaceSoftColor,
+                                borderRadius: DSRadius.soft,
+                                border: Border.all(color: mutedColor.withOpacity(0.2)),
                               ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: DSButton(
-                                label: 'Restaurer',
-                                icon: Icons.upload,
-                                backgroundColor: DSColor.getSurfaceTint(brightness),
-                                textColor: DSColor.primary,
-                                onPressed: () async {
-                                  BuildContext? dialogContext;
-                                  try {
-                                    debugPrint('🔄 Début de la restauration...');
-                                    
-                                    // Afficher un indicateur de chargement
-                                    showDialog(
-                                      context: context,
-                                      barrierDismissible: false,
-                                      builder: (context) {
-                                        dialogContext = context;
-                                        return const Center(
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              CircularProgressIndicator(),
-                                              SizedBox(height: 16),
-                                              Text('Chargement du fichier...'),
-                                            ],
-                                      ),
-                                    );
-                                      },
-                                    );
-
-                                    debugPrint('📂 Sélection du fichier...');
-                                    final fileService = FileService();
-                                    final data = await fileService.loadDataFromFile();
-                                    
-                                    // Mettre à jour le dialog
-                                    if (dialogContext != null && Navigator.canPop(dialogContext!)) {
-                                      Navigator.of(dialogContext!).pop();
-                                    }
-                                    
-                                    if (data == null) {
-                                      debugPrint('⚠️ Aucun fichier sélectionné');
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Import annulé - Aucun fichier sélectionné'),
-                                          backgroundColor: Colors.orange,
-                                        ),
-                                      );
-                                      return;
-                                    }
-
-                                    debugPrint('✅ Fichier chargé: ${data.keys.length} clés trouvées');
-                                    
-                                    // Afficher un nouveau dialog pour l'import
-                                    showDialog(
-                                      context: context,
-                                      barrierDismissible: false,
-                                      builder: (context) {
-                                        dialogContext = context;
-                                        return const Center(
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              CircularProgressIndicator(),
-                                              SizedBox(height: 16),
-                                              Text('Import des données...'),
-                                            ],
-                                          ),
-                                        );
-                                      },
-                                    );
-
-                                    try {
-                                      // Vérifier que le fichier est valide
-                                      debugPrint('🔍 Validation du fichier...');
-                                      if (!fileService.isValidBackupFile(data)) {
-                                        if (dialogContext != null && Navigator.canPop(dialogContext!)) {
-                                          Navigator.of(dialogContext!).pop();
-                                        }
-                                        debugPrint('❌ Fichier invalide. Clés: ${data.keys.toList()}');
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text('Fichier invalide.\\nClés trouvées: ${data.keys.take(5).join(", ")}...'),
-                                            backgroundColor: Colors.red,
-                                            duration: const Duration(seconds: 5),
-                                          ),
-                                        );
-                                        return;
-                                      }
-
-                                      debugPrint('✅ Fichier valide, début de l\'import...');
-                                      final exportService = DataExportImportService();
-                                      await exportService.importAllData(data);
-                                      
-                                      debugPrint('✅ Import terminé avec succès');
-                                      
-                                      // Fermer le dialog
-                                      if (dialogContext != null && Navigator.canPop(dialogContext!)) {
-                                        Navigator.of(dialogContext!).pop();
-                                      }
-                                      
-                                      // Forcer le rechargement des données
-                                      debugPrint('🔄 Rechargement des données...');
-                                      final localStorageService = LocalStorageService();
-                                      await localStorageService.reloadData();
-                                      
-                                      // Recharger les données dans l'interface
-                                      widget.onDataReload();
-                                      
-                                      debugPrint('✅ Données rechargées');
-                                      
-                                      // Afficher un message de succès avec les statistiques
-                                      final stats = localStorageService.getDataStats();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              const Row(
-                                                children: [
-                                                  Icon(Icons.check_circle, color: Colors.white, size: 20),
-                                                  SizedBox(width: 8),
-                                                  Text(
-                                                    'Restauration réussie !',
-                                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                '${stats['todos']} tâches • ${stats['projects']} projets importés',
-                                                style: const TextStyle(fontSize: 14),
-                                              ),
-                                            ],
-                                          ),
-                                          backgroundColor: Colors.green,
-                                          duration: const Duration(seconds: 5),
-                                          behavior: SnackBarBehavior.floating,
-                                        ),
-                                      );
-                                      
-                                      // Rafraîchir l'interface
-                                      widget.onSettingsChanged();
-                                    } catch (e, stackTrace) {
-                                      debugPrint('❌ Erreur lors de l\'import: $e');
-                                      debugPrint('❌ Type: ${e.runtimeType}');
-                                      debugPrint('❌ Stack trace: $stackTrace');
-                                      
-                                      // Fermer le dialog
-                                      if (dialogContext != null && Navigator.canPop(dialogContext!)) {
-                                        Navigator.of(dialogContext!).pop();
-                                      }
-                                      
-                                        final errorMessage = e.toString();
-                                        final displayMessage = errorMessage.length > 100 
-                                            ? '${errorMessage.substring(0, 100)}...' 
-                                            : errorMessage;
-                                        
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text('❌ Erreur lors de la restauration:\\n$displayMessage'),
-                                            backgroundColor: Colors.red,
-                                            duration: const Duration(seconds: 8),
-                                        ),
-                                      );
-                                    }
-                                  } catch (e, stackTrace) {
-                                    debugPrint('❌ Erreur générale lors de la restauration: $e');
-                                    debugPrint('❌ Stack trace: $stackTrace');
-                                    
-                                    // Fermer le dialog si ouvert
-                                    if (dialogContext != null && Navigator.canPop(dialogContext!)) {
-                                      Navigator.of(dialogContext!).pop();
-                                    }
-                                    
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('❌ Erreur: ${e.toString()}'),
-                                        backgroundColor: Colors.red,
-                                        duration: const Duration(seconds: 6),
-                                      ),
-                                    );
-                                  }
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        DSButton.danger(
-                          label: 'Supprimer toutes les données',
-                          icon: Icons.delete_forever,
-                          onPressed: () async {
-                                  final confirmed = await showDialog<bool>(
-                                    context: context,
-                                    builder: (context) => AlertDialog(
-                                      title: const Text('Confirmer la suppression'),
-                                      content: const Text('Êtes-vous sûr de vouloir supprimer TOUTES les données ? Cette action est irréversible.'),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () => Navigator.of(context).pop(false),
-                                          child: const Text('Annuler'),
-                                        ),
-                                        ElevatedButton(
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.red,
-                                            foregroundColor: Colors.white,
-                                          ),
-                                          onPressed: () => Navigator.of(context).pop(true),
-                                          child: const Text('Supprimer'),
-                                        ),
-                                      ],
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Utilisateur connecté:',
+                                    style: DSTypo.caption.copyWith(color: mutedColor),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  if (currentUser != null) ...[
+                                    SelectableText(
+                                      currentUser.email ?? 'Email non défini',
+                                      style: DSTypo.body.copyWith(fontWeight: FontWeight.bold),
                                     ),
-                                  );
-                                  if (confirmed == true) {
-                                    try {
-                                      showDialog(
-                                        context: context,
-                                        barrierDismissible: false,
-                                        builder: (context) => const Center(child: CircularProgressIndicator()),
-                                      );
-                                      await DataExportImportService().clearAllData();
-                                      Navigator.of(context).pop();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Toutes les données ont été supprimées.'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
-                                      widget.onSettingsChanged();
-                                    } catch (e) {
-                                      if (Navigator.canPop(context)) Navigator.of(context).pop();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('Erreur lors de la suppression: \\${e}'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
-                                    }
-                                  }
-                                },
+                                    const SizedBox(height: 4),
+                                    SelectableText(
+                                      'ID: ${currentUser.uid}',
+                                      style: DSTypo.body.copyWith(
+                                        fontFamily: 'monospace',
+                                        fontSize: 11,
+                                        color: mutedColor,
+                                      ),
+                                    ),
+                                  ] else
+                                    Text(
+                                      'Non connecté',
+                                      style: DSTypo.body.copyWith(color: mutedColor),
+                                    ),
+                                ],
                               ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        // Bouton de déconnexion
+                        SizedBox(
+                          width: double.infinity,
+                          child: DSButton.secondary(
+                            label: 'Se déconnecter',
+                            icon: Icons.logout,
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Déconnexion'),
+                                  content: const Text('Êtes-vous sûr de vouloir vous déconnecter ?'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, false),
+                                      child: const Text('Annuler'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, true),
+                                      child: const Text('Déconnexion'),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (confirm == true) {
+                                try {
+                                  await FirebaseAuthService().signOut();
+                                  // La navigation sera gérée automatiquement par le StreamBuilder
+                                  if (mounted) {
+                                    Navigator.pop(context);
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Erreur lors de la déconnexion: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              }
+                            },
+                          ),
+                        ),
                       ],
                     ),
                   ),

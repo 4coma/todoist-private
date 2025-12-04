@@ -252,12 +252,14 @@ class FirebaseSyncService {
       final deletedLocally = firestoreTodoIds.difference(localTodoIds);
 
       // 5. Supprimer les tâches qui ont été supprimées dans Firebase (sauf si modifiées localement récemment)
+      // IMPORTANT: Augmenter la fenêtre de temps à 2 minutes pour éviter de supprimer des tâches
+      // qui viennent d'être créées localement mais pas encore synchronisées
       final now = DateTime.now();
       final finalTodos = mergedTodos.where((todo) {
         if (deletedInFirebase.contains(todo.id)) {
-          // Garder la tâche si elle a été modifiée localement récemment (dans les 5 dernières secondes)
+          // Garder la tâche si elle a été modifiée localement récemment (dans les 2 dernières minutes)
           final timeSinceUpdate = now.difference(todo.updatedAt);
-          return timeSinceUpdate.inSeconds < 5;
+          return timeSinceUpdate.inMinutes < 2;
         }
         return true;
       }).toList();
@@ -362,6 +364,17 @@ class FirebaseSyncService {
       final localTodoIds = localTodos.map((t) => t.id).toSet();
       final firestoreTodoIds = todos.map((t) => t.id).toSet();
 
+      // IMPORTANT: Si Firebase est vide mais qu'il y a des données locales,
+      // ne pas écraser les données locales (elles sont peut-être en cours de synchronisation)
+      if (todos.isEmpty && localTodos.isNotEmpty) {
+        debugPrint('⚠️ FirebaseSyncService: Firebase est vide mais il y a des données locales. Conservation des données locales.');
+        // Synchroniser les données locales vers Firebase en arrière-plan
+        _syncLocalTodosToFirebase(localTodos).catchError((e) {
+          debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation des tâches locales: $e');
+        });
+        return; // Ne pas écraser les données locales
+      }
+
       // Fusionner intelligemment : garder les versions locales plus récentes
       final Map<int, TodoItem> mergedMap = {};
       
@@ -375,19 +388,27 @@ class FirebaseSyncService {
         final firestoreTodo = mergedMap[localTodo.id];
         if (firestoreTodo == null || localTodo.updatedAt.isAfter(firestoreTodo.updatedAt)) {
           mergedMap[localTodo.id] = localTodo;
+          // Si la version locale est plus récente, synchroniser vers Firebase
+          if (firestoreTodo != null) {
+            syncTodo(localTodo).catchError((e) {
+              debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation de la tâche ${localTodo.id}: $e');
+            });
+          }
         }
       }
 
-      // Supprimer les tâches qui n'existent plus dans Firebase ET qui n'ont pas été modifiées localement récemment
+      // IMPORTANT: Ne supprimer les tâches locales que si elles ont été supprimées dans Firebase
+      // ET qu'elles n'ont pas été modifiées localement récemment (dans les 2 dernières minutes)
+      // Cela évite de supprimer des tâches qui viennent d'être créées localement
       final now = DateTime.now();
       final finalTodos = mergedMap.values.where((todo) {
         // Garder la tâche si elle existe dans Firebase
         if (firestoreTodoIds.contains(todo.id)) return true;
-        // Garder la tâche si elle a été modifiée localement récemment (dans les 5 dernières secondes)
+        // Garder la tâche si elle a été modifiée localement récemment (dans les 2 dernières minutes)
         // Cela évite de supprimer une tâche qui vient d'être créée localement
         if (localTodoIds.contains(todo.id)) {
           final timeSinceUpdate = now.difference(todo.updatedAt);
-          return timeSinceUpdate.inSeconds < 5;
+          return timeSinceUpdate.inMinutes < 2;
         }
         return false;
       }).toList();
@@ -399,6 +420,24 @@ class FirebaseSyncService {
     } finally {
       _isHandlingRemoteChanges = false;
     }
+  }
+
+  /// Synchroniser toutes les tâches locales vers Firebase (méthode utilitaire)
+  Future<void> _syncLocalTodosToFirebase(List<TodoItem> localTodos) async {
+    final userId = _authService.currentUserId;
+    if (userId == null) return;
+
+    final batch = _firestore.batch();
+    for (final todo in localTodos) {
+      final todoRef = _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('todos')
+          .doc(todo.id.toString());
+      batch.set(todoRef, todo.toMap(), SetOptions(merge: true));
+    }
+    await batch.commit();
+    debugPrint('✅ FirebaseSyncService: ${localTodos.length} tâches locales synchronisées vers Firebase');
   }
 
   /// Ajouter ou mettre à jour une tâche dans Firebase
@@ -538,9 +577,35 @@ class FirebaseSyncService {
           .map((doc) => Project.fromMap(doc.data() as Map<String, dynamic>))
           .toList();
 
-      // Fusionner intelligemment avec les projets locaux
+      // Récupérer les projets locaux
       final localProjects = _localStorage.projects;
+
+      // IMPORTANT: Si Firebase est vide mais qu'il y a des données locales,
+      // ne pas écraser les données locales (elles sont peut-être en cours de synchronisation)
+      if (projects.isEmpty && localProjects.isNotEmpty) {
+        debugPrint('⚠️ FirebaseSyncService: Firebase est vide mais il y a des projets locaux. Conservation des projets locaux.');
+        // Synchroniser les projets locaux vers Firebase en arrière-plan
+        _syncLocalProjectsToFirebase(localProjects).catchError((e) {
+          debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation des projets locaux: $e');
+        });
+        return; // Ne pas écraser les projets locaux
+      }
+
+      // Fusionner intelligemment avec les projets locaux
       final mergedProjects = _mergeProjects(localProjects, projects);
+      
+      // Synchroniser les projets locaux plus récents vers Firebase
+      for (final localProject in localProjects) {
+        final firestoreProject = projects.firstWhere(
+          (p) => p.id == localProject.id,
+          orElse: () => Project(id: -1, name: '', color: const Color(0xFF000000)),
+        );
+        if (firestoreProject.id == -1 || localProject.updatedAt.isAfter(firestoreProject.updatedAt)) {
+          syncProject(localProject).catchError((e) {
+            debugPrint('❌ FirebaseSyncService: Erreur lors de la synchronisation du projet ${localProject.id}: $e');
+          });
+        }
+      }
       
       _localStorage.updateAllProjects(mergedProjects);
     } catch (e) {
@@ -548,6 +613,24 @@ class FirebaseSyncService {
     } finally {
       _isHandlingRemoteChanges = false;
     }
+  }
+
+  /// Synchroniser tous les projets locaux vers Firebase (méthode utilitaire)
+  Future<void> _syncLocalProjectsToFirebase(List<Project> localProjects) async {
+    final userId = _authService.currentUserId;
+    if (userId == null) return;
+
+    final batch = _firestore.batch();
+    for (final project in localProjects) {
+      final projectRef = _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('projects')
+          .doc(project.id.toString());
+      batch.set(projectRef, project.toMap(), SetOptions(merge: true));
+    }
+    await batch.commit();
+    debugPrint('✅ FirebaseSyncService: ${localProjects.length} projets locaux synchronisés vers Firebase');
   }
 
   Future<void> syncProject(Project project) async {
@@ -712,6 +795,115 @@ class FirebaseSyncService {
       debugPrint('❌ FirebaseSyncService: Erreur lors de la mise à jour des données de timer: $e');
     } finally {
       _isHandlingRemoteChanges = false;
+    }
+  }
+
+  // ========== MIGRATION D'UN AUTRE UTILISATEUR ==========
+
+  /// Migrer toutes les données d'un autre utilisateur vers l'utilisateur actuel
+  Future<void> migrateFromAnotherUser(String sourceUserId) async {
+    final currentUserId = _authService.currentUserId;
+    if (currentUserId == null) {
+      throw Exception('Aucun utilisateur connecté');
+    }
+
+    if (sourceUserId == currentUserId) {
+      throw Exception('Vous ne pouvez pas migrer depuis votre propre compte');
+    }
+
+    try {
+      debugPrint('🔄 FirebaseSyncService: Migration depuis l\'utilisateur $sourceUserId vers $currentUserId');
+
+      // 1. Récupérer les tâches de l'autre utilisateur
+      final sourceTodosSnapshot = await _firestore
+          .collection('users')
+          .doc(sourceUserId)
+          .collection('todos')
+          .get();
+
+      final sourceTodos = sourceTodosSnapshot.docs
+          .map((doc) => TodoItem.fromMap(doc.data()))
+          .toList();
+
+      debugPrint('📋 ${sourceTodos.length} tâches trouvées chez l\'utilisateur source');
+
+      // 2. Récupérer les projets de l'autre utilisateur
+      final sourceProjectsSnapshot = await _firestore
+          .collection('users')
+          .doc(sourceUserId)
+          .collection('projects')
+          .get();
+
+      final sourceProjects = sourceProjectsSnapshot.docs
+          .map((doc) => Project.fromMap(doc.data()))
+          .toList();
+
+      debugPrint('📁 ${sourceProjects.length} projets trouvés chez l\'utilisateur source');
+
+      // 3. Récupérer les préférences de l'autre utilisateur
+      final sourcePreferencesDoc = await _firestore
+          .collection('users')
+          .doc(sourceUserId)
+          .collection('preferences')
+          .doc('preferences')
+          .get();
+
+      final sourcePreferences = sourcePreferencesDoc.exists
+          ? Map<String, dynamic>.from(sourcePreferencesDoc.data()!)
+          : <String, dynamic>{};
+
+      // 4. Récupérer les données de timer de l'autre utilisateur
+      final sourceTimerDataDoc = await _firestore
+          .collection('users')
+          .doc(sourceUserId)
+          .collection('timer_data')
+          .doc('timer_data')
+          .get();
+
+      final sourceTimerData = sourceTimerDataDoc.exists
+          ? Map<String, dynamic>.from(sourceTimerDataDoc.data()!)
+          : <String, dynamic>{};
+
+      // 5. Fusionner avec les données locales existantes
+      final localTodos = _localStorage.todos;
+      final localProjects = _localStorage.projects;
+
+      // Fusionner les tâches (garder les plus récentes)
+      final mergedTodos = _mergeTodos(localTodos, sourceTodos);
+      
+      // Fusionner les projets (garder les plus récents)
+      final mergedProjects = _mergeProjects(localProjects, sourceProjects);
+
+      // 6. Sauvegarder localement
+      await _localStorage.updateAllTodos(mergedTodos);
+      await _localStorage.updateAllProjects(mergedProjects);
+
+      // Fusionner les préférences
+      for (final entry in sourcePreferences.entries) {
+        await _preferencesService.setPreference(entry.key, entry.value);
+      }
+
+      // Fusionner les données de timer
+      for (final entry in sourceTimerData.entries) {
+        await _localStorage.setTimerData(entry.key, entry.value);
+      }
+
+      // 7. Synchroniser vers Firebase (pour l'utilisateur actuel)
+      await _syncTodosToFirebase(mergedTodos, []);
+      await _syncProjectsToFirebase(mergedProjects, []);
+      
+      // Synchroniser les préférences
+      await syncPreferences();
+      
+      // Synchroniser les données de timer
+      await syncTimerData();
+
+      debugPrint('✅ FirebaseSyncService: Migration terminée avec succès');
+      debugPrint('   📋 ${mergedTodos.length} tâches migrées');
+      debugPrint('   📁 ${mergedProjects.length} projets migrés');
+    } catch (e) {
+      debugPrint('❌ FirebaseSyncService: Erreur lors de la migration: $e');
+      rethrow;
     }
   }
 
