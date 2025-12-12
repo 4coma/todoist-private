@@ -70,6 +70,7 @@ class NotificationService {
           category: NotificationCategory.Reminder,
           payload: payload, // Inclure les données de navigation
           groupKey: 'todo_reminder_$id', // GroupKey unique par notification pour éviter le groupement automatique
+          autoDismissible: false, // Ne pas retirer automatiquement en ouvrant l'app
         ),
         schedule: NotificationCalendar.fromDate(
           date: scheduledDate,
@@ -92,6 +93,16 @@ class NotificationService {
       debugPrint('Notification annulée pour ID: $id');
     } catch (e) {
       debugPrint('❌ Erreur lors de l\'annulation de la notification: $e');
+    }
+  }
+
+  /// Ferme uniquement une notification affichée
+  static Future<void> dismissNotification(int id) async {
+    try {
+      await AwesomeNotifications().dismiss(id);
+      debugPrint('Notification fermée pour ID: $id');
+    } catch (e) {
+      debugPrint('❌ Erreur lors de la fermeture de la notification: $e');
     }
   }
 

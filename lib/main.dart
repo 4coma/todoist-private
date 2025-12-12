@@ -82,6 +82,10 @@ _TodoHomePageState? _globalHomePageState;
 
 void _handleNotificationAction(ReceivedAction action) {
   debugPrint('🔔 Notification cliquée: ${action.payload}');
+
+  if (action.id != null) {
+    NotificationService.dismissNotification(action.id!);
+  }
   
   // Extraire l'ID de la tâche du payload
   final taskIdString = action.payload?['taskId'];
@@ -1091,7 +1095,7 @@ Règles d'extraction :
 1. "title": Le titre de la tâche. Utilise les mots exacts de l'utilisateur pour l'action principale. Ne reformule pas sauf si c'est incompréhensible.
 2. "description": Les détails supplémentaires si présents.
 3. "dueDate": La date d'échéance si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null.
-4. "reminder": La date/heure de rappel si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null. 
+4. "reminder": La date/heure de rappel si mentionnée (format ISO 8601 YYYY-MM-DDTHH:MM:SS), sinon null.
    IMPORTANT pour les rappels :
    - Si l'utilisateur dit "rappel", "rappelle-moi", "alarme", "notifie-moi", "souviens-toi", etc., tu DOIS extraire le rappel
    - Si une heure est mentionnée (ex: "à 9h", "à 14h30", "à 8 heures du matin"), c'est un rappel
@@ -1100,12 +1104,20 @@ Règles d'extraction :
    - Si une date relative est mentionnée pour un rappel (ex: "rappel demain à 14h"), calcule la date absolue
    - Le format doit être ISO 8601 complet : YYYY-MM-DDTHH:MM:SS (ex: "2024-03-22T09:00:00")
 5. "project": Le nom du projet UNIQUEMENT si explicitement mentionné par l'utilisateur (ex: "dans le projet Travail", "catégorie Maison"). Si aucun projet n'est mentionné, tu DOIS retourner null. Ne devine pas ou n'invente pas de projet.
-6. Si une date est relative (ex: "demain", "lundi", "jeudi prochain", "dans 3 jours"), calcule la date absolue en te basant sur la date actuelle ($currentDateFormatted). 
+6. Si une date est relative (ex: "demain", "lundi", "jeudi prochain", "dans 3 jours"), calcule la date absolue en te basant sur la date actuelle ($currentDateFormatted).
    - "demain" = jour suivant
    - "après-demain" = dans 2 jours
    - "lundi", "mardi", etc. = prochain jour de la semaine mentionné (si c'est déjà passé cette semaine, prends celui de la semaine prochaine)
    - "lundi prochain" = lundi de la semaine prochaine
    - "dans X jours" = date actuelle + X jours
+7. Sous-tâches : détecte explicitement les formulations demandant des sous-tâches (ex: "et ajoute en tant que sous-tâches les tâches suivantes", "ajoute aussi comme sous-tâches", "sous-tâches : ..."). Dans ce cas, retourne un tableau "subTasks" avec chaque sous-tâche sous la forme {
+   "title": titre exact de la sous-tâche,
+   "description": description si présente, sinon "",
+   "dueDate": date ISO complète ou null,
+   "reminder": date ISO complète ou null
+ }.
+   - Les sous-tâches doivent être retournées dans l'ordre d'énonciation.
+   - Si aucune sous-tâche n'est mentionnée, retourne un tableau vide.
 
 EXEMPLES de rappels :
 - "rappel à 9h" → reminder: "2024-03-22T09:00:00" (aujourd'hui à 9h, ou demain si l'heure est passée)
@@ -1119,7 +1131,11 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
   "description": "...",
   "dueDate": "..." or null,
   "reminder": "..." or null,
-  "project": "..." or null
+  "project": "..." or null,
+  "subTasks": [
+    {"title": "...", "description": "...", "dueDate": "..." or null, "reminder": "..." or null},
+    {"title": "...", "description": "...", "dueDate": "..." or null, "reminder": "..." or null}
+  ]
 }
 ''';
 
@@ -1482,7 +1498,65 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
     // Utiliser TodoService pour ajouter la tâche (synchronise automatiquement avec Firebase)
     final todoService = TodoService();
     await todoService.addTodo(newTodo);
-    
+
+    // Ajouter les sous-tâches dictées (si présentes)
+    final rawSubTasks = (todoMap['subTasks'] as List?) ??
+        (todoMap['sub_tasks'] as List?) ??
+        [];
+
+    for (var i = 0; i < rawSubTasks.length; i++) {
+      final raw = rawSubTasks[i];
+      if (raw is! Map) continue;
+
+      final subTitle = raw['title']?.toString().trim();
+      if (subTitle == null || subTitle.isEmpty) continue;
+
+      DateTime? subDueDate;
+      if (raw['dueDate'] != null && raw['dueDate'].toString().trim().isNotEmpty) {
+        try {
+          subDueDate = DateTime.parse(raw['dueDate']);
+        } catch (_) {}
+      }
+
+      DateTime? subReminder;
+      if (raw['reminder'] != null && raw['reminder'].toString().trim().isNotEmpty) {
+        try {
+          subReminder = DateTime.parse(raw['reminder']);
+          if (subReminder.isBefore(DateTime.now())) {
+            subReminder = subReminder.add(const Duration(days: 1));
+          }
+        } catch (_) {
+          subReminder = null;
+        }
+      }
+
+      final subTask = TodoItem(
+        id: DateTime.now().millisecondsSinceEpoch + i + 1,
+        title: subTitle,
+        description: raw['description']?.toString() ?? '',
+        priority: Priority.medium,
+        projectId: projectId,
+        isCompleted: false,
+        parentId: newTodo.id,
+        level: 1,
+        dueDate: subDueDate,
+        reminder: subReminder,
+      );
+
+      await todoService.addTodo(subTask);
+
+      if (subReminder != null && subReminder.isAfter(DateTime.now())) {
+        await NotificationService.scheduleTaskReminder(
+          taskId: subTask.id,
+          title: subTask.title,
+          body: subTask.description.isNotEmpty
+              ? subTask.description
+              : 'Rappel de sous-tâche',
+          scheduledDate: subReminder,
+        );
+      }
+    }
+
     // Recharger les données pour mettre à jour l'interface
     await _loadData();
     
@@ -1967,7 +2041,11 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 
   // Méthodes utilitaires pour les sous-tâches
   List<TodoItem> _getSubTasks(int parentId) {
-    return _todos.where((todo) => todo.parentId == parentId).toList();
+    final subTasks = _todos.where((todo) => todo.parentId == parentId).toList();
+
+    // Toujours afficher les sous-tâches les plus récentes en premier
+    subTasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return subTasks;
   }
 
   // Sous-tâches à afficher selon les préférences
@@ -1988,8 +2066,11 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant ce format :
 
     // Toujours placer les sous-tâches terminées en bas
     result.sort((a, b) {
-      if (a.isCompleted == b.isCompleted) return 0;
-      return a.isCompleted ? 1 : -1; // Terminées en bas
+      if (a.isCompleted != b.isCompleted) {
+        return a.isCompleted ? 1 : -1; // Terminées en bas
+      }
+
+      return b.createdAt.compareTo(a.createdAt);
     });
 
     return result;
@@ -4070,7 +4151,7 @@ class _AddTodoModalState extends State<AddTodoModal> {
           elapsedMinutes: 0,
           elapsedSeconds: 0,
         );
-        _subTasks.add(subTask);
+        _subTasks.insert(0, subTask);
         _subTaskController.clear();
 
         // Afficher un toast de confirmation
@@ -4402,9 +4483,27 @@ class _AddTodoModalState extends State<AddTodoModal> {
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.check_circle_outline, size: 16, color: mutedColor),
-                            const SizedBox(width: 8),
-                            Expanded(child: Text(subTask.title, style: DSTypo.bodyOf(context))),
+                            Checkbox(
+                              value: subTask.isCompleted,
+                              onChanged: (_) {
+                                setState(() {
+                                  subTask.isCompleted = !subTask.isCompleted;
+                                });
+                              },
+                              activeColor: DSColor.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                subTask.title,
+                                style: DSTypo.bodyOf(context).copyWith(
+                                  decoration: subTask.isCompleted
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                  color: subTask.isCompleted ? mutedColor : null,
+                                ),
+                              ),
+                            ),
                             IconButton(
                             icon: const Icon(Icons.close, size: 18, color: Colors.red),
                             onPressed: () => setState(() => _subTasks.removeAt(index)),
@@ -4595,7 +4694,7 @@ class _EditTodoModalState extends State<EditTodoModal> {
         
         // Mettre à jour la liste locale
         setState(() {
-          _subTasks = List.from(_subTasks)..add(subTask);
+          _subTasks = List.from(_subTasks)..insert(0, subTask);
         });
         
         // Sauvegarder immédiatement
@@ -5121,8 +5220,12 @@ class _EditTodoModalState extends State<EditTodoModal> {
                       // Trier les sous-tâches : non terminées en premier, terminées en dernier
                       final sortedSubTasks = List<TodoItem>.from(_subTasks)
                         ..sort((a, b) {
-                          if (a.isCompleted == b.isCompleted) return 0;
-                          return a.isCompleted ? 1 : -1; // Non terminées en premier
+                          if (a.isCompleted != b.isCompleted) {
+                            return a.isCompleted ? 1 : -1; // Non terminées en premier
+                          }
+
+                          // Pour les tâches avec le même statut, afficher les plus récentes en premier
+                          return b.createdAt.compareTo(a.createdAt);
                         });
                       
                       return ListView.separated(
